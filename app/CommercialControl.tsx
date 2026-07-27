@@ -46,6 +46,7 @@ type Section =
   | "pipeline"
   | "okrs"
   | "equipe"
+  | "joao-reis"
   | "governanca"
   | "dados";
 
@@ -55,8 +56,9 @@ const navItems: Array<{ id: Section; label: string; index: string }> = [
   { id: "pipeline", label: "Negócios", index: "02" },
   { id: "okrs", label: "OKRs", index: "03" },
   { id: "equipe", label: "Equipe & canais", index: "04" },
-  { id: "governanca", label: "Governança", index: "05" },
-  { id: "dados", label: "Base completa", index: "06" },
+  { id: "joao-reis", label: "SDR João Reis", index: "05" },
+  { id: "governanca", label: "Governança", index: "06" },
+  { id: "dados", label: "Base completa", index: "07" },
 ];
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -104,6 +106,88 @@ function initials(name: string) {
     .join("")
     .toUpperCase();
 }
+
+function normalizeReference(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("pt-BR")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function referencesJoaoReis(value: unknown) {
+  const normalized = normalizeReference(value);
+  return normalized.includes("joao") && normalized.includes("reis");
+}
+
+const JOAO_BASELINE = {
+  scheduled: 15,
+  held: 10,
+  noShow: 5,
+};
+
+const JOAO_TARGET = {
+  scheduled: 30,
+  held: 24,
+  maxNoShow: 6,
+  showRate: 0.8,
+};
+
+const JOAO_WEEKLY_PLAN = [
+  {
+    week: "Semana 1",
+    theme: "Diagnóstico, foco e instrumentação",
+    scheduled: 6,
+    held: 4,
+    actions: [
+      "Auditar 100% dos leads, atividades, tarefas, reuniões e motivos de perda ou no-show disponíveis no Bitrix24.",
+      "Classificar a carteira por ICP, prioridade, origem, temperatura, última interação e próximo passo.",
+      "Construir o script de abertura, perguntas de diagnóstico e proposta de valor por segmento.",
+      "Realizar dois role-plays e revisar cinco conversas reais com feedback objetivo.",
+    ],
+    deliverable: "Scorecard inicial, script v1, carteira priorizada e campos obrigatórios no CRM.",
+  },
+  {
+    week: "Semana 2",
+    theme: "Volume com cadência multicanal",
+    scheduled: 7,
+    held: 5,
+    actions: [
+      "Executar dois blocos diários de prospecção sem interrupção, com lista preparada antes do primeiro contato.",
+      "Aplicar cadência de 12 tentativas em 15 dias combinando ligação, WhatsApp, e-mail e LinkedIn.",
+      "Registrar cada tentativa e deixar sempre uma próxima ação com data, horário e objetivo definidos.",
+      "Medir conversão por canal e concentrar energia nas origens que gerarem conversas qualificadas.",
+    ],
+    deliverable: "Cadência v1 ativa, painel diário e relatório de conversão por canal.",
+  },
+  {
+    week: "Semana 3",
+    theme: "Conversão, objeções e prevenção de no-show",
+    scheduled: 8,
+    held: 7,
+    actions: [
+      "Treinar tratamento das dez objeções mais recorrentes e criar respostas curtas por contexto.",
+      "Enviar convite de calendário imediatamente, com pauta, duração, participantes e benefício esperado.",
+      "Aplicar confirmação D-1, lembrete H-2 e mensagem H-15 com opção simples de confirmar ou reagendar.",
+      "Executar protocolo de recuperação do no-show em até 5 minutos, 2 horas e 24 horas.",
+    ],
+    deliverable: "Playbook de objeções, sequência de confirmação e fluxo de recuperação de faltas.",
+  },
+  {
+    week: "Semana 4",
+    theme: "Escala, repetição e autonomia",
+    scheduled: 9,
+    held: 8,
+    actions: [
+      "Duplicar os canais, mensagens e faixas de horário com melhor conversão observada nas três semanas anteriores.",
+      "Reativar leads mornos e no-shows antigos com nova abordagem orientada a valor e urgência real.",
+      "Fazer revisão final de calls, ajustar o script e documentar as práticas que João executa melhor.",
+      "Fechar o mês com retroativa, plano do ciclo seguinte e metas semanais já carregadas no Bitrix24.",
+    ],
+    deliverable: "Playbook v2, rotina sustentável e plano de manutenção para o próximo mês.",
+  },
+];
 
 function formatKeyResult(value: number, unit: string) {
   if (unit === "currency") return currency.format(value);
@@ -803,7 +887,7 @@ export function CommercialControl({
       try {
         const [dealsRes, activityRes, sellersRes, actionItemsRes] = await Promise.all([
           fetch("/api/deals", { cache: "no-store", signal: controller.signal }),
-          fetch("/api/activity?limit=20", { cache: "no-store", signal: controller.signal }),
+          fetch("/api/activity?limit=500", { cache: "no-store", signal: controller.signal }),
           fetch("/api/sellers", { cache: "no-store", signal: controller.signal }),
           fetch("/api/action-items", { cache: "no-store", signal: controller.signal }),
         ]);
@@ -1036,10 +1120,7 @@ export function CommercialControl({
       if (exists) {
         return prev.map((t) => (t.monthNumber === monthNumber ? { ...t, target: value } : t));
       }
-      return [
-        ...prev,
-        { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value, sold: 0, adjusted: 0 },
-      ];
+      return [...prev, { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value }];
     });
 
     try {
@@ -1242,6 +1323,106 @@ export function CommercialControl({
     ...selectedOwnerDashboard.months.map((month) => month.adjusted),
     1,
   );
+
+
+  const joaoOwnerName = useMemo(() => {
+    const exactOwner = owners.find((owner) => referencesJoaoReis(owner));
+    const exactSeller = sellers.find((seller) => referencesJoaoReis(seller.name))?.name;
+    return exactOwner ?? exactSeller ?? "João Reis";
+  }, [owners, sellers]);
+
+  const joaoDeals = useMemo(
+    () => deals.filter((deal) => referencesJoaoReis(deal.owner)),
+    [deals],
+  );
+
+  const joaoAuditEntries = useMemo(
+    () =>
+      activity.filter((entry) => {
+        if (referencesJoaoReis(entry.actorEmail)) return true;
+        if (referencesJoaoReis(entry.detailJson)) return true;
+        try {
+          const detail = JSON.parse(entry.detailJson) as Record<string, unknown>;
+          return Object.values(detail).some((value) => referencesJoaoReis(value));
+        } catch {
+          return false;
+        }
+      }),
+    [activity],
+  );
+
+  const joaoAuditMetrics = useMemo(() => {
+    const nowMs = new Date(asOf).getTime();
+    const recordsWithoutNotes = joaoDeals.filter((deal) => !deal.notes?.trim()).length;
+    const recordsWithoutOrigin = joaoDeals.filter(
+      (deal) => !deal.origin?.trim() || normalizeReference(deal.origin) === "sem origem",
+    ).length;
+    const openWithoutRecentUpdate = joaoDeals.filter((deal) => {
+      if (deal.stage !== "aberto" && deal.stage !== "ganho") return false;
+      const updatedMs = new Date(deal.updatedAt).getTime();
+      if (!Number.isFinite(updatedMs) || !Number.isFinite(nowMs)) return false;
+      return nowMs - updatedMs > 7 * 86_400_000;
+    }).length;
+    const registeredNotes = joaoDeals.filter((deal) => Boolean(deal.notes?.trim())).length;
+    const activeRecords = joaoDeals.filter(
+      (deal) => deal.stage === "aberto" || deal.stage === "ganho",
+    ).length;
+    const distinctOrigins = new Set(
+      joaoDeals.map((deal) => deal.origin).filter(Boolean),
+    ).size;
+
+    return {
+      recordsWithoutNotes,
+      recordsWithoutOrigin,
+      openWithoutRecentUpdate,
+      registeredNotes,
+      activeRecords,
+      distinctOrigins,
+    };
+  }, [joaoDeals, asOf]);
+
+  const joaoCompanyCount = useMemo(
+    () =>
+      new Set(
+        joaoDeals
+          .map((deal) => normalizeReference(deal.company))
+          .filter(Boolean),
+      ).size,
+    [joaoDeals],
+  );
+
+  const joaoActivityCount = joaoAuditEntries.length;
+  const joaoShowRate = JOAO_BASELINE.held / JOAO_BASELINE.scheduled;
+  const joaoNoShowRate = JOAO_BASELINE.noShow / JOAO_BASELINE.scheduled;
+  const joaoHeldGrowth = JOAO_TARGET.held / JOAO_BASELINE.held - 1;
+  const joaoScheduledGrowth = JOAO_TARGET.scheduled / JOAO_BASELINE.scheduled - 1;
+  const joaoSchedulesNeededAtCurrentRate = Math.ceil(JOAO_TARGET.held / joaoShowRate);
+  const joaoCurrentEfficiencyFactor =
+    joaoSchedulesNeededAtCurrentRate / JOAO_BASELINE.scheduled;
+  const joaoPlanVolumeFactor = JOAO_TARGET.scheduled / JOAO_BASELINE.scheduled;
+  const joaoActivitiesFor24AtCurrentEfficiency =
+    joaoActivityCount > 0
+      ? Math.ceil(joaoActivityCount * joaoCurrentEfficiencyFactor)
+      : null;
+  const joaoActivitiesForPlan =
+    joaoActivityCount > 0
+      ? Math.ceil(joaoActivityCount * joaoPlanVolumeFactor)
+      : null;
+  const joaoCompaniesFor24AtCurrentEfficiency =
+    joaoCompanyCount > 0
+      ? Math.ceil(joaoCompanyCount * joaoCurrentEfficiencyFactor)
+      : null;
+  const joaoCompaniesForPlan =
+    joaoCompanyCount > 0
+      ? Math.ceil(joaoCompanyCount * joaoPlanVolumeFactor)
+      : null;
+  const joaoActivityToScheduleRate =
+    joaoActivityCount > 0 ? JOAO_BASELINE.scheduled / joaoActivityCount : null;
+  const joaoCompanyToScheduleRatio =
+    joaoCompanyCount > 0 ? JOAO_BASELINE.scheduled / joaoCompanyCount : null;
+  const joaoNoShowsAtCurrentRateFor24 =
+    joaoSchedulesNeededAtCurrentRate - JOAO_TARGET.held;
+  const joaoWorkDays = 20;
 
   // Visão executiva: "Visão completa" (empresa) vs. "Por vendedor", ambas
   // podem ser recortadas por um mês específico ou pelo ano inteiro.
@@ -1478,12 +1659,8 @@ export function CommercialControl({
 
         {isReadOnly && (
           <div className="readonly-banner">
-            <span>
-              {user.isPreview
-                ? "Modo somente leitura — entre para criar, editar e mover negócios."
-                : "Sua conta não tem permissão de edição neste painel. Peça a um administrador para liberar seu acesso em user_roles."}
-            </span>
-            {user.isPreview && <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>}
+            <span>Modo somente leitura — entre para criar, editar e mover negócios.</span>
+            <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>
           </div>
         )}
 
@@ -1666,39 +1843,6 @@ export function CommercialControl({
                   </div>
                   <span className="issue-count">{BITRIX_AUDIT_REFERENCE.source}</span>
                 </div>
-
-                <div className="bitrix-summary-grid">
-                  <div>
-                    <span>Win rate</span>
-                    <strong>{percent.format(BITRIX_AUDIT_REFERENCE.summary.winRatePct)}</strong>
-                  </div>
-                  <div>
-                    <span>Loss rate</span>
-                    <strong>{percent.format(BITRIX_AUDIT_REFERENCE.summary.lossRatePct)}</strong>
-                  </div>
-                  <div>
-                    <span>Ticket médio</span>
-                    <strong>{preciseCurrency.format(BITRIX_AUDIT_REFERENCE.summary.ticketMedio)}</strong>
-                  </div>
-                  <div>
-                    <span>Cobertura de pipeline</span>
-                    <strong>
-                      {BITRIX_AUDIT_REFERENCE.summary.coberturaPipeline.toFixed(2).replace(".", ",")}×
-                    </strong>
-                  </div>
-                  <div>
-                    <span>Lead time</span>
-                    <strong>{BITRIX_AUDIT_REFERENCE.summary.leadTimeDias.toFixed(1).replace(".", ",")}d</strong>
-                  </div>
-                  <div>
-                    <span>Ganhos / Perdidos / Abertos</span>
-                    <strong>
-                      {BITRIX_AUDIT_REFERENCE.summary.dealsGanhos}/{BITRIX_AUDIT_REFERENCE.summary.dealsPerdidos}/
-                      {BITRIX_AUDIT_REFERENCE.summary.dealsAbertos}
-                    </strong>
-                  </div>
-                </div>
-
                 <div className="bottleneck-list">
                   {BITRIX_AUDIT_REFERENCE.riscos.map((item) => (
                     <div key={item.label} className="bottleneck-item severity-alta">
@@ -1714,7 +1858,7 @@ export function CommercialControl({
                   ))}
                   {BITRIX_AUDIT_REFERENCE.concentracao.map((item) => (
                     <div key={item.owner} className="bottleneck-item severity-baixa">
-                      <strong>{item.owner} — {item.value}</strong>
+                      <strong>{item.owner}</strong>
                       <p>{item.detail}</p>
                     </div>
                   ))}
@@ -2796,6 +2940,595 @@ export function CommercialControl({
                 <button type="button" onClick={() => setSection("dados")}>
                   Consultar todas as linhas <b>→</b>
                 </button>
+              </div>
+            </article>
+          </section>
+        )}
+
+        {section === "joao-reis" && (
+          <section className="page-content">
+            <div className="page-intro">
+              <div>
+                <span className="section-kicker">Performance individual · SDR</span>
+                <h2>João Reis: auditoria, reconhecimento e plano de aceleração.</h2>
+                <p>
+                  Uma leitura executiva do que já gerou impacto positivo, dos gargalos que limitam
+                  a conversão e do plano de 30 dias para alcançar pelo menos 24 reuniões realizadas.
+                </p>
+              </div>
+              <span className="security-badge">Meta operacional · 30 agendadas / 24 realizadas</span>
+            </div>
+
+            <article
+              className="seller-hero"
+              style={{
+                background:
+                  "linear-gradient(135deg, rgba(20, 39, 67, 0.98), rgba(14, 94, 88, 0.92))",
+              }}
+            >
+              <div className="seller-identity">
+                <span>{initials(joaoOwnerName)}</span>
+                <div>
+                  <small>Reconhecimento de performance</small>
+                  <h3>Parabéns, {joaoOwnerName}.</h3>
+                  <p>
+                    As 15 reuniões agendadas colocaram novas oportunidades em movimento e 10 delas
+                    viraram conversas reais. Esse resultado já produz impacto positivo no topo do
+                    funil. O próximo salto é transformar consistência em escala, protegendo cada
+                    agenda contra no-show e elevando a qualidade do registro no Bitrix24.
+                  </p>
+                </div>
+              </div>
+              <div className="seller-share">
+                <span>Taxa atual de comparecimento</span>
+                <strong>{percent.format(joaoShowRate)}</strong>
+                <i>
+                  <b style={{ width: `${joaoShowRate * 100}%` }} />
+                </i>
+                <small>Meta do plano: {percent.format(JOAO_TARGET.showRate)}</small>
+              </div>
+            </article>
+
+            <div className="seller-kpi-grid">
+              <article>
+                <span>Atividades identificadas</span>
+                <strong>{joaoActivityCount > 0 ? joaoActivityCount : "N/D"}</strong>
+                <small>
+                  {joaoActivityCount > 0
+                    ? "Eventos relacionados no recorte da auditoria"
+                    : "O recorte carregado não expôs atividades nominais"}
+                </small>
+              </article>
+              <article>
+                <span>Empresas identificadas</span>
+                <strong>{joaoCompanyCount > 0 ? joaoCompanyCount : "N/D"}</strong>
+                <small>
+                  {joaoCompanyCount > 0
+                    ? "Empresas únicas nos registros atribuídos"
+                    : "Nenhuma empresa nominalmente atribuída no conjunto"}
+                </small>
+              </article>
+              <article>
+                <span>Reuniões agendadas</span>
+                <strong>{JOAO_BASELINE.scheduled}</strong>
+                <small>Base atual informada</small>
+              </article>
+              <article>
+                <span>Reuniões realizadas</span>
+                <strong>{JOAO_BASELINE.held}</strong>
+                <small>{percent.format(joaoShowRate)} de comparecimento</small>
+              </article>
+              <article>
+                <span>No-show</span>
+                <strong>{JOAO_BASELINE.noShow}</strong>
+                <small>{percent.format(joaoNoShowRate)} das agendas</small>
+              </article>
+              <article>
+                <span>Meta de agendas</span>
+                <strong>{JOAO_TARGET.scheduled}</strong>
+                <small>+{percent.format(joaoScheduledGrowth)} de volume</small>
+              </article>
+              <article>
+                <span>Meta realizadas</span>
+                <strong>{JOAO_TARGET.held}</strong>
+                <small>+{percent.format(joaoHeldGrowth)} sobre a base</small>
+              </article>
+              <article>
+                <span>No-show máximo</span>
+                <strong>{JOAO_TARGET.maxNoShow}</strong>
+                <small>Limite de {percent.format(1 - JOAO_TARGET.showRate)}</small>
+              </article>
+            </div>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Funil completo auditado</span>
+                  <h3>Atividades → empresas → agendas → realizadas → no-show</h3>
+                </div>
+                <span className="issue-count">Conta proporcional do esforço</span>
+              </div>
+              <p className="dashboard-note">
+                As atividades e empresas abaixo são contadas diretamente no recorte disponível:
+                eventos nominalmente relacionados a João e empresas únicas nos negócios atribuídos.
+                Quando o Bitrix24 não expõe o dado, a tela mostra N/D em vez de transformar ausência
+                de evidência em zero. As projeções mantêm a proporção atual de esforço por agenda.
+              </p>
+              <div className="data-table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Indicador</th>
+                      <th>Atual observado</th>
+                      <th>Relação atual</th>
+                      <th>Somente escala<br />36 agendas / 24 realizadas</th>
+                      <th>Plano corrigido<br />30 agendas / 24 realizadas</th>
+                      <th>Meta média do plano</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Atividades</strong></td>
+                      <td>{joaoActivityCount > 0 ? joaoActivityCount : "N/D"}</td>
+                      <td>
+                        {joaoActivityCount > 0
+                          ? `${(joaoActivityCount / JOAO_BASELINE.scheduled).toFixed(1).replace(".", ",")} por agenda`
+                          : "Sem base suficiente"}
+                      </td>
+                      <td>{joaoActivitiesFor24AtCurrentEfficiency ?? "N/D"}</td>
+                      <td className="emphasis">{joaoActivitiesForPlan ?? "N/D"}</td>
+                      <td>
+                        {joaoActivitiesForPlan
+                          ? `${Math.ceil(joaoActivitiesForPlan / 4)} por semana · ${Math.ceil(joaoActivitiesForPlan / joaoWorkDays)} por dia`
+                          : "Depende da extração integral"}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Empresas trabalhadas</strong></td>
+                      <td>{joaoCompanyCount > 0 ? joaoCompanyCount : "N/D"}</td>
+                      <td>
+                        {joaoCompanyToScheduleRatio
+                          ? `${joaoCompanyToScheduleRatio.toFixed(2).replace(".", ",")} agenda(s) por empresa`
+                          : "Sem base suficiente"}
+                      </td>
+                      <td>{joaoCompaniesFor24AtCurrentEfficiency ?? "N/D"}</td>
+                      <td className="emphasis">{joaoCompaniesForPlan ?? "N/D"}</td>
+                      <td>
+                        {joaoCompaniesForPlan
+                          ? `${Math.ceil(joaoCompaniesForPlan / 4)} por semana · ${Math.ceil(joaoCompaniesForPlan / joaoWorkDays)} por dia`
+                          : "Depende da atribuição dos negócios"}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td><strong>Reuniões agendadas</strong></td>
+                      <td>{JOAO_BASELINE.scheduled}</td>
+                      <td>
+                        {joaoActivityToScheduleRate
+                          ? `${percent.format(joaoActivityToScheduleRate)} das atividades viraram agenda`
+                          : "Base informada: 15"}
+                      </td>
+                      <td>{joaoSchedulesNeededAtCurrentRate}</td>
+                      <td className="emphasis">{JOAO_TARGET.scheduled}</td>
+                      <td>7,5 por semana · 1,5 por dia útil</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Reuniões realizadas</strong></td>
+                      <td>{JOAO_BASELINE.held}</td>
+                      <td>{percent.format(joaoShowRate)} das agendas</td>
+                      <td>{JOAO_TARGET.held}</td>
+                      <td className="emphasis">{JOAO_TARGET.held}</td>
+                      <td>6 por semana · 1,2 por dia útil</td>
+                    </tr>
+                    <tr>
+                      <td><strong>No-show</strong></td>
+                      <td>{JOAO_BASELINE.noShow}</td>
+                      <td>{percent.format(joaoNoShowRate)} das agendas</td>
+                      <td>{joaoNoShowsAtCurrentRateFor24}</td>
+                      <td className="emphasis">Até {JOAO_TARGET.maxNoShow}</td>
+                      <td>Até 1,5 por semana · taxa máxima de 20%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="dashboard-note">
+                <strong>Leitura gerencial:</strong> se apenas multiplicarmos o esforço mantendo o
+                comparecimento atual, João precisará de {joaoSchedulesNeededAtCurrentRate} agendas e
+                poderá acumular cerca de {joaoNoShowsAtCurrentRateFor24} no-shows para chegar a 24
+                realizadas. O plano recomendado reduz o desperdício: 30 agendas, 24 realizadas e no
+                máximo 6 faltas. Atividades e empresas são ampliadas em {joaoPlanVolumeFactor.toFixed(1).replace(".", ",")}x,
+                preservando inicialmente a produtividade histórica e recalibrando-a semanalmente.
+              </p>
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Leitura matemática da meta</span>
+                  <h3>Por que o alvo operacional precisa ser 30 agendas</h3>
+                </div>
+                <span className="issue-count">24 realizadas é o piso</span>
+              </div>
+              <p className="dashboard-note">
+                Com a taxa atual de {percent.format(joaoShowRate)}, seriam necessárias aproximadamente
+                {" "}{joaoSchedulesNeededAtCurrentRate} agendas para garantir 24 reuniões realizadas.
+                O plano reduz essa dependência de volume bruto ao elevar o comparecimento para 80%,
+                permitindo trabalhar com 30 agendas e margem de segurança de 6 possíveis ausências.
+              </p>
+              <div className="data-table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Indicador</th>
+                      <th>Atual</th>
+                      <th>Meta mínima</th>
+                      <th>Meta operacional</th>
+                      <th>Variação necessária</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Agendadas</strong></td>
+                      <td>{JOAO_BASELINE.scheduled}</td>
+                      <td>24</td>
+                      <td className="emphasis">{JOAO_TARGET.scheduled}</td>
+                      <td>+{JOAO_TARGET.scheduled - JOAO_BASELINE.scheduled}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Realizadas</strong></td>
+                      <td>{JOAO_BASELINE.held}</td>
+                      <td>24</td>
+                      <td className="emphasis">{JOAO_TARGET.held}</td>
+                      <td>+{JOAO_TARGET.held - JOAO_BASELINE.held}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Taxa de comparecimento</strong></td>
+                      <td>{percent.format(joaoShowRate)}</td>
+                      <td>{percent.format(JOAO_TARGET.showRate)}</td>
+                      <td className="emphasis">80% ou mais</td>
+                      <td>+{((JOAO_TARGET.showRate - joaoShowRate) * 100).toFixed(1).replace(".", ",")} p.p.</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Taxa de no-show</strong></td>
+                      <td>{percent.format(joaoNoShowRate)}</td>
+                      <td>Até 20%</td>
+                      <td className="emphasis">Até {JOAO_TARGET.maxNoShow} faltas em 30 agendas</td>
+                      <td>-{((joaoNoShowRate - (1 - JOAO_TARGET.showRate)) * 100).toFixed(1).replace(".", ",")} p.p.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <div className="dashboard-bottleneck-grid">
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Feitos que merecem reconhecimento</span>
+                    <h3>Impactos positivos já produzidos</h3>
+                  </div>
+                  <span className="issue-count">Base para escalar</span>
+                </div>
+                <div className="bottleneck-list">
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>15 oportunidades de reunião colocadas no calendário</strong>
+                    <p>João já demonstrou capacidade de gerar agenda e movimentar o topo do funil.</p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>10 conversas efetivamente realizadas</strong>
+                    <p>Cada reunião realizada cria espaço para diagnóstico, avanço comercial e aprendizagem sobre o mercado.</p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>{joaoDeals.length} registro(s) comercial(is) atribuídos no conjunto carregado</strong>
+                    <p>
+                      {joaoDeals.length > 0
+                        ? `${joaoAuditMetrics.activeRecords} permanecem ativos e ${joaoAuditMetrics.registeredNotes} possuem anotações.`
+                        : "O conjunto carregado ainda não expôs negócios atribuídos nominalmente a João Reis."}
+                    </p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>{joaoAuditEntries.length} evento(s) identificados na trilha de auditoria disponível</strong>
+                    <p>
+                      {joaoAuditEntries.length > 0
+                        ? "Há evidência rastreável de atuação ou referência ao SDR nos eventos retornados pela API."
+                        : "O recorte atual do log não retornou eventos nominalmente atribuídos a João Reis."}
+                    </p>
+                  </div>
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Gargalos prioritários</span>
+                    <h3>O que hoje impede o salto de performance</h3>
+                  </div>
+                  <span className="issue-count">Ação imediata</span>
+                </div>
+                <div className="bottleneck-list">
+                  <div className="bottleneck-item severity-alta">
+                    <strong>No-show de {percent.format(joaoNoShowRate)}</strong>
+                    <p>Uma em cada três agendas não se converte em reunião realizada. Esse é o maior vazamento do funil atual.</p>
+                  </div>
+                  <div className="bottleneck-item severity-alta">
+                    <strong>Gap de {JOAO_TARGET.held - JOAO_BASELINE.held} reuniões realizadas</strong>
+                    <p>O resultado precisa crescer {percent.format(joaoHeldGrowth)} sem reduzir a qualidade da qualificação.</p>
+                  </div>
+                  <div className="bottleneck-item severity-média">
+                    <strong>Volume atual abaixo da faixa de segurança</strong>
+                    <p>Quinze agendas não suportam a meta de 24 realizadas. O plano cria uma margem operacional de 30 agendas.</p>
+                  </div>
+                  {joaoAuditMetrics.recordsWithoutNotes > 0 && (
+                    <div className="bottleneck-item severity-média">
+                      <strong>{joaoAuditMetrics.recordsWithoutNotes} registro(s) sem anotação</strong>
+                      <p>Sem contexto registrado, o follow-up perde precisão e a gestão não consegue orientar a próxima ação.</p>
+                    </div>
+                  )}
+                  {joaoAuditMetrics.openWithoutRecentUpdate > 0 && (
+                    <div className="bottleneck-item severity-média">
+                      <strong>{joaoAuditMetrics.openWithoutRecentUpdate} registro(s) ativo(s) sem atualização há mais de 7 dias</strong>
+                      <p>Carteira parada tende a envelhecer e consumir energia sem uma próxima ação claramente definida.</p>
+                    </div>
+                  )}
+                  {joaoAuditMetrics.recordsWithoutOrigin > 0 && (
+                    <div className="bottleneck-item severity-média">
+                      <strong>{joaoAuditMetrics.recordsWithoutOrigin} registro(s) sem origem confiável</strong>
+                      <p>A ausência do canal impede descobrir quais fontes geram mais reuniões qualificadas.</p>
+                    </div>
+                  )}
+                </div>
+              </article>
+            </div>
+
+            <article className="panel activity-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Auditoria Bitrix24</span>
+                  <h3>Atividades atribuídas ou relacionadas a João Reis</h3>
+                </div>
+                <span>{joaoAuditEntries.length} eventos no recorte carregado</span>
+              </div>
+              <p className="dashboard-note">
+                O componente consulta atualmente até 500 eventos recentes da API de atividade.
+                Esta lista apresenta tudo o que foi encontrado nesse recorte, sem inventar registros.
+                Para uma auditoria histórica integral, a rota de atividade deve oferecer paginação completa
+                ou filtro por usuário e período.
+              </p>
+              <div className="activity-list">
+                {joaoAuditEntries.length === 0 && (
+                  <p className="activity-empty">
+                    Nenhum evento nominalmente associado a João Reis apareceu na trilha disponível.
+                  </p>
+                )}
+                {joaoAuditEntries.map((entry) => {
+                  const detail = (() => {
+                    try {
+                      return JSON.parse(entry.detailJson) as Record<string, unknown>;
+                    } catch {
+                      return {};
+                    }
+                  })();
+                  const detailSummary = Object.entries(detail)
+                    .filter(([, value]) => typeof value === "string" || typeof value === "number")
+                    .slice(0, 3)
+                    .map(([key, value]) => `${key}: ${String(value)}`)
+                    .join(" · ");
+                  return (
+                    <div key={entry.id} className="activity-item">
+                      <span className="activity-avatar">JR</span>
+                      <span className="activity-copy">
+                        <strong>{entry.actorEmail}</strong>{" "}
+                        {ACTION_LABELS[entry.action] ?? entry.action}
+                        {detailSummary ? ` · ${detailSummary}` : ""}
+                      </span>
+                      <small>{relativeTimestamp(entry.createdAt)}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Plano de 30 dias</span>
+                  <h3>Execução semanal para chegar a 30 agendadas e 24 realizadas</h3>
+                </div>
+                <span className="issue-count">4 semanas · 30 / 24</span>
+              </div>
+              <div className="data-table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Etapa</th>
+                      <th>Foco</th>
+                      <th>Escopo desenvolvido com João</th>
+                      <th>Entregável</th>
+                      <th>Meta semanal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {JOAO_WEEKLY_PLAN.map((item) => (
+                      <tr key={item.week}>
+                        <td><strong>{item.week}</strong></td>
+                        <td>{item.theme}</td>
+                        <td>
+                          <ol style={{ margin: 0, paddingLeft: "1.1rem" }}>
+                            {item.actions.map((action) => <li key={action}>{action}</li>)}
+                          </ol>
+                        </td>
+                        <td>{item.deliverable}</td>
+                        <td className="emphasis">
+                          {item.scheduled} agendadas<br />
+                          {item.held} realizadas
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td colSpan={4}><strong>Total do ciclo</strong></td>
+                      <td className="emphasis"><strong>30 agendadas<br />24 realizadas</strong></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </article>
+
+            <div className="governance-grid">
+              <article className="panel rhythm-panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Rotina diária do SDR</span>
+                    <h3>Blocos que protegem execução e foco</h3>
+                  </div>
+                </div>
+                <div className="rhythm-list">
+                  {[
+                    ["08:30–10:00", "Prospecção nova", "Lista priorizada, ligações e mensagens personalizadas sem reuniões internas."],
+                    ["10:00–10:20", "Follow-up quente", "Responder interessados e avançar leads com sinal recente de intenção."],
+                    ["11:30–11:45", "Confirmação D-1", "Confirmar agenda do dia seguinte e oferecer reagendamento simples."],
+                    ["14:00–15:00", "Segundo bloco outbound", "Nova rodada multicanal e reativação de leads mornos."],
+                    ["16:30–16:50", "Recuperação de no-show", "Contato rápido com faltantes e tentativa de remarcar ainda no mesmo dia."],
+                    ["17:15–17:30", "Higiene do Bitrix24", "Atualizar status, motivo, próxima ação, tarefa, notas e resultado do dia."],
+                  ].map(([cadence, ritual, evidence], index) => (
+                    <div key={cadence}>
+                      <span className="rhythm-step">{String(index + 1).padStart(2, "0")}</span>
+                      <span><small>{cadence}</small><strong>{ritual}</strong></span>
+                      <p>{evidence}</p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel approval-panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Piso diário inicial</span>
+                    <h3>Atividades controláveis</h3>
+                  </div>
+                </div>
+                <ol>
+                  <li><strong>50 novos contatos por dia</strong>, priorizados por ICP e potencial.</li>
+                  <li><strong>20 follow-ups por dia</strong>, sempre com contexto e próxima ação.</li>
+                  <li><strong>10 mensagens altamente personalizadas</strong> para contas prioritárias.</li>
+                  <li><strong>4 conversas qualificadas por dia</strong> como indicador intermediário.</li>
+                  <li><strong>1,5 reunião agendada por dia útil</strong>, média necessária para 30 no mês.</li>
+                  <li><strong>100% das atividades registradas</strong> no Bitrix24 até o fim do expediente.</li>
+                </ol>
+                <p className="dashboard-note">
+                  Esses pisos são uma referência inicial. Após cinco dias úteis, devem ser recalibrados
+                  com a conversão real por canal, lista e faixa de horário.
+                </p>
+              </article>
+            </div>
+
+            <div className="dashboard-bottleneck-grid">
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Prevenção de no-show</span>
+                    <h3>Protocolo obrigatório para cada agenda</h3>
+                  </div>
+                </div>
+                <div className="bottleneck-list">
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>Imediatamente após o agendamento</strong>
+                    <p>Convite no calendário, pauta de três tópicos, duração, link e pedido de aceite.</p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>D-1</strong>
+                    <p>Mensagem de confirmação com benefício da conversa e opções “confirmar” ou “reagendar”.</p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>H-2 e H-15</strong>
+                    <p>Lembretes curtos, humanos e objetivos, sem excesso de texto.</p>
+                  </div>
+                  <div className="bottleneck-item severity-média">
+                    <strong>Faltou: 5 min, 2 h e 24 h</strong>
+                    <p>Tentativas de recuperação em três janelas, com link direto para nova data e motivo do no-show registrado.</p>
+                  </div>
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Coaching e gestão</span>
+                    <h3>Escopo de acompanhamento com João</h3>
+                  </div>
+                </div>
+                <div className="bottleneck-list">
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>1 sessão semanal de 60 minutos</strong>
+                    <p>Revisão de métricas, prioridades, obstáculos e plano da semana seguinte.</p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>2 role-plays por semana</strong>
+                    <p>Abertura, diagnóstico, convite para reunião, objeções e recuperação de no-show.</p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>5 conversas auditadas por semana</strong>
+                    <p>Feedback com nota, evidência observável e uma competência prioritária por ciclo.</p>
+                  </div>
+                  <div className="bottleneck-item severity-baixa">
+                    <strong>Check-in diário de 15 minutos nas primeiras duas semanas</strong>
+                    <p>Volume, agenda, confirmações, bloqueios e compromissos do dia.</p>
+                  </div>
+                </div>
+              </article>
+            </div>
+
+            <article className="panel access-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Governança no Bitrix24</span>
+                  <h3>Regras de qualidade que sustentam a meta</h3>
+                </div>
+                <span>Sem dado limpo, não há coaching preciso</span>
+              </div>
+              <div className="data-table-wrap">
+                <table className="data-table access-table">
+                  <thead>
+                    <tr>
+                      <th>Regra</th>
+                      <th>Critério de aceite</th>
+                      <th>Frequência</th>
+                      <th>Responsável</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Nenhum lead sem próxima ação</strong></td>
+                      <td>Tarefa futura com data, hora e objetivo</td>
+                      <td>Diária</td>
+                      <td>João Reis</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Reunião com convite e confirmação</strong></td>
+                      <td>Calendário aceito, pauta e lembretes programados</td>
+                      <td>Por agenda</td>
+                      <td>João Reis</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Motivo de no-show obrigatório</strong></td>
+                      <td>Categoria, observação e tentativa de recuperação</td>
+                      <td>Por falta</td>
+                      <td>João Reis</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Auditoria de qualidade</strong></td>
+                      <td>Amostra de cinco registros e cinco conversas</td>
+                      <td>Semanal</td>
+                      <td>Gestor comercial</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Scorecard executivo</strong></td>
+                      <td>Agendadas, realizadas, show rate, conversão e origem</td>
+                      <td>Semanal e mensal</td>
+                      <td>Gestor + João</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </article>
           </section>
