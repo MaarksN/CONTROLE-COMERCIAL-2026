@@ -1036,7 +1036,10 @@ export function CommercialControl({
       if (exists) {
         return prev.map((t) => (t.monthNumber === monthNumber ? { ...t, target: value } : t));
       }
-      return [...prev, { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value }];
+      return [
+        ...prev,
+        { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value, sold: 0, adjusted: 0 },
+      ];
     });
 
     try {
@@ -1475,8 +1478,12 @@ export function CommercialControl({
 
         {isReadOnly && (
           <div className="readonly-banner">
-            <span>Modo somente leitura — entre para criar, editar e mover negócios.</span>
-            <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>
+            <span>
+              {user.isPreview
+                ? "Modo somente leitura — entre para criar, editar e mover negócios."
+                : "Sua conta não tem permissão de edição neste painel. Peça a um administrador para liberar seu acesso em user_roles."}
+            </span>
+            {user.isPreview && <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>}
           </div>
         )}
 
@@ -1536,10 +1543,10 @@ export function CommercialControl({
             </div>
 
             <p className="dashboard-note">
-              Nota de metodologia: não há meta de 2025 nos dados importados, então "aumento do
-              atingimento de meta" é reportado como crescimento de receita ano a ano (YoY) e como
-              quantos meses de 2026 bateram a própria meta — não como comparação direta de % de
-              atingimento entre os dois anos.
+              Nota de metodologia: não há meta de 2025 nos dados importados, então &ldquo;aumento
+              do atingimento de meta&rdquo; é reportado como crescimento de receita ano a ano
+              (YoY) e como quantos meses de 2026 bateram a própria meta — não como comparação
+              direta de % de atingimento entre os dois anos.
             </p>
 
             <article className="panel dashboard-months-panel">
@@ -1659,6 +1666,39 @@ export function CommercialControl({
                   </div>
                   <span className="issue-count">{BITRIX_AUDIT_REFERENCE.source}</span>
                 </div>
+
+                <div className="bitrix-summary-grid">
+                  <div>
+                    <span>Win rate</span>
+                    <strong>{percent.format(BITRIX_AUDIT_REFERENCE.summary.winRatePct)}</strong>
+                  </div>
+                  <div>
+                    <span>Loss rate</span>
+                    <strong>{percent.format(BITRIX_AUDIT_REFERENCE.summary.lossRatePct)}</strong>
+                  </div>
+                  <div>
+                    <span>Ticket médio</span>
+                    <strong>{preciseCurrency.format(BITRIX_AUDIT_REFERENCE.summary.ticketMedio)}</strong>
+                  </div>
+                  <div>
+                    <span>Cobertura de pipeline</span>
+                    <strong>
+                      {BITRIX_AUDIT_REFERENCE.summary.coberturaPipeline.toFixed(2).replace(".", ",")}×
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Lead time</span>
+                    <strong>{BITRIX_AUDIT_REFERENCE.summary.leadTimeDias.toFixed(1).replace(".", ",")}d</strong>
+                  </div>
+                  <div>
+                    <span>Ganhos / Perdidos / Abertos</span>
+                    <strong>
+                      {BITRIX_AUDIT_REFERENCE.summary.dealsGanhos}/{BITRIX_AUDIT_REFERENCE.summary.dealsPerdidos}/
+                      {BITRIX_AUDIT_REFERENCE.summary.dealsAbertos}
+                    </strong>
+                  </div>
+                </div>
+
                 <div className="bottleneck-list">
                   {BITRIX_AUDIT_REFERENCE.riscos.map((item) => (
                     <div key={item.label} className="bottleneck-item severity-alta">
@@ -1666,15 +1706,50 @@ export function CommercialControl({
                       <p>{item.detail}</p>
                     </div>
                   ))}
-                  {BITRIX_AUDIT_REFERENCE.pioresEtapas.map((item) => (
-                    <div key={`${item.pipeline}-${item.etapa}`} className="bottleneck-item severity-média">
-                      <strong>{item.pipeline} — {item.dias.toFixed(1).replace(".", ",")}d parado</strong>
-                      <p>Pior etapa observada: "{item.etapa}".</p>
-                    </div>
-                  ))}
+                </div>
+
+                <div className="data-table-wrap bitrix-pipeline-table">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Pipeline</th>
+                        <th>Negócios</th>
+                        <th>Valor total</th>
+                        <th>Valor ganho</th>
+                        <th>Win rate</th>
+                        <th>Retrabalho</th>
+                        <th>Gargalos</th>
+                        <th>Pior etapa</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {BITRIX_AUDIT_REFERENCE.pipelines.map((p) => (
+                        <tr key={p.nome}>
+                          <td><strong>{p.nome}</strong></td>
+                          <td>{p.negocios}</td>
+                          <td>{currency.format(p.valorTotal)}</td>
+                          <td>{currency.format(p.valorGanho)}</td>
+                          <td>{percent.format(p.winRatePct)}</td>
+                          <td>
+                            {percent.format(p.retrabalhoPct)} ({p.retrabalhoCount})
+                          </td>
+                          <td>{p.gargalos}</td>
+                          <td>
+                            {p.piorEtapa}
+                            {p.piorEtapaDias !== null
+                              ? ` · ${p.piorEtapaDias.toFixed(1).replace(".", ",")}d`
+                              : ""}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="bottleneck-list">
                   {BITRIX_AUDIT_REFERENCE.concentracao.map((item) => (
                     <div key={item.owner} className="bottleneck-item severity-baixa">
-                      <strong>{item.owner}</strong>
+                      <strong>{item.owner} — {item.value}</strong>
                       <p>{item.detail}</p>
                     </div>
                   ))}
