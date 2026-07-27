@@ -1,0 +1,9 @@
+Nº,Tela,Módulo,Finalidade,Recursos presentes,Arquivo da imagem
+1,Capa,Capa,Ponto de entrada,Cards de atalho,01-capa-inicial.png
+2,Dashboard,Dashboard,Análise macro,Indicadores de crescimento,01-dashboard-principal.png
+3,Visão completa,Geral,Visão unificada,Menu lateral e resumo,01-visao-completa.png
+4,Negócios,Pipeline,Gestão de deals,Lista de pipeline,02-pipeline-negocios.png
+5,OKRs,OKRs,Acompanhamento estratégico,Progresso de OKRs,03-okrs.png
+6,Equipe & canais,Equipe,Análise de desempenho,Lista de membros/canais,04-equipe-canais.png
+7,Governança,Governança,Rotinas operacionais,Status de ritos,05-governanca.png
+8,Base completa,Dados,Visualização crua de dados,Formato tabela,01-base-completa.png
