@@ -13,6 +13,14 @@ import {
   type Stage,
   type Target,
 } from "./deriveMetrics";
+import {
+  BITRIX_AUDIT_REFERENCE,
+  buildDashboardInsights,
+  HORIZON_LABELS,
+  type ActionHorizon,
+  type ActionItem,
+  type ActionStatus,
+} from "./deriveDashboard";
 import type { CommercialData } from "@/db/commercial-data";
 
 type User = {
@@ -32,6 +40,8 @@ type ActivityEntry = {
 };
 
 type Section =
+  | "capa"
+  | "dashboard"
   | "visao"
   | "pipeline"
   | "okrs"
@@ -40,7 +50,8 @@ type Section =
   | "dados";
 
 const navItems: Array<{ id: Section; label: string; index: string }> = [
-  { id: "visao", label: "Visão executiva", index: "01" },
+  { id: "dashboard", label: "Dashboard", index: "00" },
+  { id: "visao", label: "Visão completa", index: "01" },
   { id: "pipeline", label: "Negócios", index: "02" },
   { id: "okrs", label: "OKRs", index: "03" },
   { id: "equipe", label: "Equipe & canais", index: "04" },
@@ -72,6 +83,9 @@ const ACTION_LABELS: Record<string, string> = {
   "deal.delete": "excluiu o negócio",
   "target.update": "atualizou a meta",
   "seller.create": "adicionou o vendedor",
+  "action_item.create": "criou o item do plano de ação",
+  "action_item.update": "atualizou o item do plano de ação",
+  "action_item.delete": "excluiu o item do plano de ação",
 };
 
 const STAGE_PILL_CLASS: Record<Stage, string> = {
@@ -103,6 +117,19 @@ function healthLabel(value: number) {
   if (value >= 1) return "Meta superada";
   if (value >= 0.7) return "Em atenção";
   return "Ação necessária";
+}
+
+const ACTION_STATUS_LABELS: Record<ActionStatus, string> = {
+  pendente: "Pendente",
+  andamento: "Em andamento",
+  concluido: "Concluído",
+};
+
+const ACTION_STATUS_ORDER: ActionStatus[] = ["pendente", "andamento", "concluido"];
+
+function nextActionStatus(status: ActionStatus): ActionStatus {
+  const index = ACTION_STATUS_ORDER.indexOf(status);
+  return ACTION_STATUS_ORDER[(index + 1) % ACTION_STATUS_ORDER.length];
 }
 
 function timeAgoLabel(seconds: number) {
@@ -570,6 +597,137 @@ function SellerModal({
   );
 }
 
+type ActionItemFormValues = {
+  title: string;
+  description: string;
+  owner: string;
+  horizon: ActionHorizon;
+};
+
+function emptyActionItemForm(defaultHorizon: ActionHorizon): ActionItemFormValues {
+  return { title: "", description: "", owner: "", horizon: defaultHorizon };
+}
+
+function formFromActionItem(item: ActionItem): ActionItemFormValues {
+  return {
+    title: item.title,
+    description: item.description,
+    owner: item.owner ?? "",
+    horizon: item.horizon,
+  };
+}
+
+function ActionItemModal({
+  mode,
+  initialValues,
+  saving,
+  errorMessage,
+  onClose,
+  onSubmit,
+  onDelete,
+}: {
+  mode: "create" | "edit";
+  initialValues: ActionItemFormValues;
+  saving: boolean;
+  errorMessage: string | null;
+  onClose: () => void;
+  onSubmit: (values: ActionItemFormValues) => void;
+  onDelete?: () => void;
+}) {
+  const [values, setValues] = useState(initialValues);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-small" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <h3>{mode === "create" ? "Novo item do plano de ação" : "Editar item do plano"}</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <form
+          className="modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!values.title.trim()) return;
+            onSubmit(values);
+          }}
+        >
+          <label>
+            <span>Título</span>
+            <input
+              value={values.title}
+              onChange={(event) => setValues({ ...values, title: event.target.value })}
+              required
+              autoFocus
+            />
+          </label>
+          <label className="modal-form-notes">
+            <span>Descrição / entrega / critério de aceite</span>
+            <textarea
+              rows={3}
+              value={values.description}
+              onChange={(event) => setValues({ ...values, description: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Responsável</span>
+            <input
+              value={values.owner}
+              onChange={(event) => setValues({ ...values, owner: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Horizonte</span>
+            <select
+              value={values.horizon}
+              onChange={(event) =>
+                setValues({ ...values, horizon: event.target.value as ActionHorizon })
+              }
+            >
+              {(Object.keys(HORIZON_LABELS) as ActionHorizon[]).map((horizon) => (
+                <option key={horizon} value={horizon}>
+                  {HORIZON_LABELS[horizon]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {errorMessage && <p className="modal-error">{errorMessage}</p>}
+
+          <div className="modal-actions">
+            {mode === "edit" && onDelete && (
+              <button
+                type="button"
+                className={confirmingDelete ? "modal-delete confirming" : "modal-delete"}
+                onClick={() => {
+                  if (confirmingDelete) {
+                    onDelete();
+                  } else {
+                    setConfirmingDelete(true);
+                    setTimeout(() => setConfirmingDelete(false), 4000);
+                  }
+                }}
+              >
+                {confirmingDelete ? "Confirmar exclusão" : "Excluir"}
+              </button>
+            )}
+            <div className="modal-actions-right">
+              <button type="button" className="modal-cancel" onClick={onClose}>
+                Cancelar
+              </button>
+              <button type="submit" className="primary-button" disabled={saving}>
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function CommercialControl({
   data,
   user,
@@ -579,7 +737,7 @@ export function CommercialControl({
   user: User;
   isReadOnly: boolean;
 }) {
-  const [section, setSection] = useState<Section>("visao");
+  const [section, setSection] = useState<Section>("capa");
   const [search, setSearch] = useState("");
   const [monthFilter, setMonthFilter] = useState("Todos");
   const [ownerFilter, setOwnerFilter] = useState("Todos");
@@ -616,6 +774,13 @@ export function CommercialControl({
     null,
   );
 
+  const [actionItems, setActionItems] = useState<ActionItem[]>(data.actionItems);
+  const [actionItemModal, setActionItemModal] = useState<
+    { mode: "create"; defaultHorizon: ActionHorizon } | { mode: "edit"; item: ActionItem } | null
+  >(null);
+  const [actionItemModalSaving, setActionItemModalSaving] = useState(false);
+  const [actionItemModalError, setActionItemModalError] = useState<string | null>(null);
+
   const [visaoScope, setVisaoScope] = useState<"completa" | "vendedor">("completa");
   const [visaoMonth, setVisaoMonth] = useState<number | "todos">("todos");
 
@@ -636,10 +801,11 @@ export function CommercialControl({
 
     async function poll() {
       try {
-        const [dealsRes, activityRes, sellersRes] = await Promise.all([
+        const [dealsRes, activityRes, sellersRes, actionItemsRes] = await Promise.all([
           fetch("/api/deals", { cache: "no-store", signal: controller.signal }),
           fetch("/api/activity?limit=20", { cache: "no-store", signal: controller.signal }),
           fetch("/api/sellers", { cache: "no-store", signal: controller.signal }),
+          fetch("/api/action-items", { cache: "no-store", signal: controller.signal }),
         ]);
         if (!dealsRes.ok) throw new Error("sync failed");
         const dealsJson = (await dealsRes.json()) as { deals: Deal[]; targets: Target[] };
@@ -664,6 +830,10 @@ export function CommercialControl({
         if (sellersRes.ok) {
           const sellersJson = (await sellersRes.json()) as { sellers: Seller[] };
           if (!cancelled) setSellers(sellersJson.sellers);
+        }
+        if (actionItemsRes.ok) {
+          const actionItemsJson = (await actionItemsRes.json()) as { actionItems: ActionItem[] };
+          if (!cancelled) setActionItems(actionItemsJson.actionItems);
         }
       } catch (error) {
         if (!cancelled && (error as Error).name !== "AbortError") {
@@ -702,6 +872,24 @@ export function CommercialControl({
   const currentMonthMetric =
     monthlyMetrics.find((metric) => metric.monthNumber === currentMonthNumber) ??
     monthlyMetrics[monthlyMetrics.length - 1];
+
+  const dashboardInsights = useMemo(
+    () =>
+      buildDashboardInsights({
+        deals,
+        monthlyMetrics,
+        historicalDeals: data.historicalDeals,
+        ownerPerformance,
+        asOf,
+      }),
+    [deals, monthlyMetrics, data.historicalDeals, ownerPerformance, asOf],
+  );
+
+  const actionItemsByHorizon = useMemo(() => {
+    const grouped: Record<ActionHorizon, ActionItem[]> = { h0: [], h1: [], h2: [], h3: [] };
+    for (const item of actionItems) grouped[item.horizon].push(item);
+    return grouped;
+  }, [actionItems]);
 
   const origins = useMemo(
     () =>
@@ -902,6 +1090,96 @@ export function CommercialControl({
     }
   }
 
+  async function createActionItem(values: ActionItemFormValues) {
+    setActionItemModalSaving(true);
+    setActionItemModalError(null);
+    try {
+      const res = await fetch("/api/action-items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const json = (await res.json()) as { actionItem?: ActionItem; error?: string };
+      if (!res.ok || !json.actionItem) throw new Error(json.error ?? "Erro ao criar item");
+      setActionItems((prev) => [...prev, json.actionItem as ActionItem]);
+      setActionItemModalSaving(false);
+      setActionItemModal(null);
+      showToast("success", "Item do plano de ação criado.");
+    } catch (error) {
+      setActionItemModalSaving(false);
+      setActionItemModalError(error instanceof Error ? error.message : "Erro ao criar item");
+    }
+  }
+
+  async function updateActionItem(
+    id: string,
+    patch: Partial<{ title: string; description: string; owner: string | null; horizon: ActionHorizon; status: ActionStatus }>,
+    options?: { silent?: boolean },
+  ) {
+    const previous = actionItems;
+    setActionItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } as ActionItem : item)),
+    );
+
+    try {
+      const res = await fetch(`/api/action-items/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const json = (await res.json()) as { actionItem?: ActionItem; error?: string };
+      if (!res.ok || !json.actionItem) throw new Error(json.error ?? "Erro ao atualizar item");
+      setActionItems((prev) => prev.map((item) => (item.id === id ? (json.actionItem as ActionItem) : item)));
+      if (!options?.silent) {
+        setActionItemModalSaving(false);
+        setActionItemModal(null);
+        showToast("success", "Item do plano de ação atualizado.");
+      }
+    } catch (error) {
+      setActionItems(previous);
+      if (!options?.silent) {
+        setActionItemModalSaving(false);
+        setActionItemModalError(error instanceof Error ? error.message : "Erro ao atualizar item");
+      } else {
+        showToast("error", error instanceof Error ? error.message : "Erro ao atualizar status");
+      }
+    }
+  }
+
+  async function deleteActionItemFn(id: string) {
+    const previous = actionItems;
+    setActionItems((prev) => prev.filter((item) => item.id !== id));
+
+    try {
+      const res = await fetch(`/api/action-items/${id}`, { method: "DELETE" });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Erro ao excluir item");
+      setActionItemModalSaving(false);
+      setActionItemModal(null);
+      showToast("success", "Item do plano de ação excluído.");
+    } catch (error) {
+      setActionItems(previous);
+      setActionItemModalSaving(false);
+      setActionItemModalError(error instanceof Error ? error.message : "Erro ao excluir item");
+    }
+  }
+
+  function handleActionItemModalSubmit(values: ActionItemFormValues) {
+    if (!actionItemModal) return;
+    if (actionItemModal.mode === "create") {
+      void createActionItem(values);
+      return;
+    }
+    setActionItemModalSaving(true);
+    setActionItemModalError(null);
+    void updateActionItem(actionItemModal.item.id, {
+      title: values.title.trim(),
+      description: values.description.trim(),
+      owner: values.owner.trim() || null,
+      horizon: values.horizon,
+    });
+  }
+
   function handleModalSubmit(values: DealFormValues) {
     if (!dealModal) return;
     if (dealModal.mode === "create") {
@@ -1049,13 +1327,90 @@ export function CommercialControl({
 
   const secondsSinceSync = Math.max(0, Math.round((now - lastSyncedAt) / 1000));
 
+  if (section === "capa") {
+    const criticalCount =
+      dashboardInsights.internalBottlenecks.filter((item) => item.severity === "alta").length +
+      dashboardInsights.internalBottlenecks.filter((item) => item.severity === "média").length;
+    return (
+      <div className="cover-screen">
+        <div className="cover-hero">
+          <img src="/atlas-logo.png" alt="Atlas" className="cover-logo" />
+          <span className="eyebrow">Controle comercial · 2026</span>
+          <h1>Atlas Comercial 360</h1>
+          <p>
+            Escolha como quer entrar: um Dashboard analítico com comparação anual e plano de
+            ação, ou a Visão completa da operação para navegar por negócios, equipe e governança.
+          </p>
+        </div>
+        <div className="cover-cards">
+          <button type="button" className="cover-card" onClick={() => setSection("dashboard")}>
+            <span className="cover-card-icon">📊</span>
+            <h2>Dashboard</h2>
+            <p>Todos os meses, comparação com 2025, gargalos e plano de ação de melhorias.</p>
+            <div className="cover-card-stats">
+              <div>
+                <span>Crescimento YoY</span>
+                <strong>
+                  {dashboardInsights.yoy.growthPct === null
+                    ? "—"
+                    : `${dashboardInsights.yoy.growthPct >= 0 ? "+" : ""}${(dashboardInsights.yoy.growthPct * 100).toFixed(1).replace(".", ",")}%`}
+                </strong>
+              </div>
+              <div>
+                <span>Meses acima da meta</span>
+                <strong>
+                  {dashboardInsights.yoy.monthsAboveTarget2026}/{dashboardInsights.yoy.totalMonths2026}
+                </strong>
+              </div>
+              <div>
+                <span>Gargalos ativos</span>
+                <strong>{criticalCount}</strong>
+              </div>
+            </div>
+            <b className="cover-card-cta">Abrir Dashboard →</b>
+          </button>
+
+          <button type="button" className="cover-card" onClick={() => setSection("visao")}>
+            <span className="cover-card-icon">🗂️</span>
+            <h2>Visão completa</h2>
+            <p>Receita governada, pipeline por etapa, equipe, OKRs e governança em um só lugar.</p>
+            <div className="cover-card-stats">
+              <div>
+                <span>Receita ajustada YTD</span>
+                <strong>{currency.format(executiveSummary.ytdAdjusted)}</strong>
+              </div>
+              <div>
+                <span>Meta YTD</span>
+                <strong>{currency.format(executiveSummary.ytdTarget)}</strong>
+              </div>
+              <div>
+                <span>Negócios ativos</span>
+                <strong>{deals.length}</strong>
+              </div>
+            </div>
+            <b className="cover-card-cta">Abrir Visão completa →</b>
+          </button>
+        </div>
+        <div className="cover-footer">
+          <span className="lock-dot">●</span>
+          {user.isPreview ? "Acesso público temporário" : `Conectado como ${user.email}`}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand-lockup">
+        <button
+          type="button"
+          className="brand-lockup"
+          onClick={() => setSection("capa")}
+          title="Voltar à capa"
+        >
           <img src="/atlas-logo.png" alt="Atlas" className="brand-logo" />
           <span>Comercial 360</span>
-        </div>
+        </button>
 
         <nav className="main-nav" aria-label="Navegação principal">
           {navItems.map((item) => (
@@ -1137,6 +1492,253 @@ export function CommercialControl({
             </button>
           ))}
         </div>
+
+        {section === "dashboard" && (
+          <section className="page-content">
+            <div className="page-intro">
+              <div>
+                <span className="section-kicker">Análise executiva</span>
+                <h2>Todos os meses do ano, lado a lado com 2025.</h2>
+                <p>
+                  Receita, atingimento de meta, comparação com o ano anterior, gargalos
+                  identificados e o plano de ação para melhorar os próximos meses.
+                </p>
+              </div>
+            </div>
+
+            <div className="kpi-grid">
+              <article className="kpi-card accent">
+                <span>Crescimento de receita YoY</span>
+                <strong>
+                  {dashboardInsights.yoy.growthPct === null
+                    ? "Sem base 2025 comparável"
+                    : `${dashboardInsights.yoy.growthPct >= 0 ? "+" : ""}${(dashboardInsights.yoy.growthPct * 100).toFixed(1).replace(".", ",")}%`}
+                </strong>
+                <small>vendido 2026 vs. 2025 nos meses em comum</small>
+              </article>
+              <article className="kpi-card">
+                <span>Meses acima da meta em 2026</span>
+                <strong>
+                  {dashboardInsights.yoy.monthsAboveTarget2026}/{dashboardInsights.yoy.totalMonths2026}
+                </strong>
+                <small>{dashboardInsights.yoy.monthsAtOrBelowTarget2026} mês(es) abaixo da meta</small>
+              </article>
+              <article className="kpi-card">
+                <span>Vendido 2025 (período comparável)</span>
+                <strong>{currency.format(dashboardInsights.yoy.sold2025PeriodTotal)}</strong>
+                <small>mesmos meses cobertos por 2026</small>
+              </article>
+              <article className="kpi-card">
+                <span>Vendido 2026 (mesmo período)</span>
+                <strong>{currency.format(dashboardInsights.yoy.sold2026PeriodTotal)}</strong>
+                <small>{deals.length} negócios no ano</small>
+              </article>
+            </div>
+
+            <p className="dashboard-note">
+              Nota de metodologia: não há meta de 2025 nos dados importados, então "aumento do
+              atingimento de meta" é reportado como crescimento de receita ano a ano (YoY) e como
+              quantos meses de 2026 bateram a própria meta — não como comparação direta de % de
+              atingimento entre os dois anos.
+            </p>
+
+            <article className="panel dashboard-months-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Todos os meses</span>
+                  <h3>Meta, vendido, ajustado e comparação com 2025</h3>
+                </div>
+              </div>
+              <div className="data-table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Mês</th>
+                      <th>Meta 2026</th>
+                      <th>Vendido 2026</th>
+                      <th>Ajustado 2026</th>
+                      <th>Atingimento</th>
+                      <th>Situação</th>
+                      <th>Vendido 2025</th>
+                      <th>Δ vs. 2025</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dashboardInsights.monthlyComparison.map((row) => (
+                      <tr key={row.monthNumber}>
+                        <td><strong>{row.month}</strong></td>
+                        <td>{currency.format(row.target2026)}</td>
+                        <td>{currency.format(row.sold2026)}</td>
+                        <td className="emphasis">{currency.format(row.adjusted2026)}</td>
+                        <td>{percent.format(row.attainment2026)}</td>
+                        <td>
+                          <small className={row.health2026 ? `health-${row.health2026}` : ""}>
+                            {row.health2026 ? healthLabel(row.attainment2026) : "—"}
+                          </small>
+                        </td>
+                        <td>{row.sold2025 > 0 ? currency.format(row.sold2025) : "Sem dado 2025"}</td>
+                        <td>
+                          {row.deltaPct === null ? (
+                            "—"
+                          ) : (
+                            <span className={row.deltaPct >= 0 ? "positive-delta" : "negative-delta"}>
+                              {row.deltaPct >= 0 ? "+" : ""}
+                              {(row.deltaPct * 100).toFixed(1).replace(".", ",")}%
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Progressão do ano</span>
+                  <h3>Receita ajustada acumulada vs. meta acumulada</h3>
+                </div>
+              </div>
+              <div className="bar-chart">
+                {dashboardInsights.progression.map((row) => {
+                  const maxCumulative = Math.max(
+                    ...dashboardInsights.progression.flatMap((p) => [p.cumulativeAdjusted, p.cumulativeTarget]),
+                    1,
+                  );
+                  return (
+                    <div className="bar-group" key={row.month}>
+                      <div className="bar-values">
+                        <span>{currency.format(row.cumulativeAdjusted)}</span>
+                      </div>
+                      <div className="bar-pair">
+                        <i
+                          className="bar target"
+                          style={{ height: `${Math.max((row.cumulativeTarget / maxCumulative) * 100, 4)}%` }}
+                        />
+                        <i
+                          className="bar actual"
+                          style={{ height: `${Math.max((row.cumulativeAdjusted / maxCumulative) * 100, 4)}%` }}
+                        />
+                      </div>
+                      <strong>{row.month.slice(0, 3)}</strong>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
+
+            <div className="dashboard-bottleneck-grid">
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Gargalos ao vivo</span>
+                    <h3>Controle Comercial 2026</h3>
+                  </div>
+                  <span className="issue-count">{dashboardInsights.internalBottlenecks.length} alertas</span>
+                </div>
+                <div className="bottleneck-list">
+                  {dashboardInsights.internalBottlenecks.length === 0 && (
+                    <p className="activity-empty">Nenhum gargalo identificado no momento.</p>
+                  )}
+                  {dashboardInsights.internalBottlenecks.map((item) => (
+                    <div key={item.label} className={`bottleneck-item severity-${item.severity}`}>
+                      <strong>{item.label}</strong>
+                      <p>{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-kicker">Referência externa</span>
+                    <h3>Auditoria Bitrix24</h3>
+                  </div>
+                  <span className="issue-count">{BITRIX_AUDIT_REFERENCE.source}</span>
+                </div>
+                <div className="bottleneck-list">
+                  {BITRIX_AUDIT_REFERENCE.riscos.map((item) => (
+                    <div key={item.label} className="bottleneck-item severity-alta">
+                      <strong>{item.label} — {item.value}</strong>
+                      <p>{item.detail}</p>
+                    </div>
+                  ))}
+                  {BITRIX_AUDIT_REFERENCE.pioresEtapas.map((item) => (
+                    <div key={`${item.pipeline}-${item.etapa}`} className="bottleneck-item severity-média">
+                      <strong>{item.pipeline} — {item.dias.toFixed(1).replace(".", ",")}d parado</strong>
+                      <p>Pior etapa observada: "{item.etapa}".</p>
+                    </div>
+                  ))}
+                  {BITRIX_AUDIT_REFERENCE.concentracao.map((item) => (
+                    <div key={item.owner} className="bottleneck-item severity-baixa">
+                      <strong>{item.owner}</strong>
+                      <p>{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+
+            <article className="panel action-plan-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Plano de ação</span>
+                  <h3>Melhorias por horizonte de execução</h3>
+                </div>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    className="primary-button accent-button"
+                    onClick={() => setActionItemModal({ mode: "create", defaultHorizon: "h1" })}
+                  >
+                    + Novo item
+                  </button>
+                )}
+              </div>
+              {(["h0", "h1", "h2", "h3"] as ActionHorizon[]).map((horizon) => (
+                <div key={horizon} className="action-horizon-group">
+                  <h4>{HORIZON_LABELS[horizon]}</h4>
+                  {actionItemsByHorizon[horizon].length === 0 && (
+                    <p className="action-empty">Nenhum item neste horizonte.</p>
+                  )}
+                  {actionItemsByHorizon[horizon].map((item) => (
+                    <div key={item.id} className="action-item-row">
+                      <button
+                        type="button"
+                        className={`status-chip status-${item.status}`}
+                        disabled={isReadOnly}
+                        onClick={() =>
+                          void updateActionItem(
+                            item.id,
+                            { status: nextActionStatus(item.status) },
+                            { silent: true },
+                          )
+                        }
+                        title="Clique para avançar o status"
+                      >
+                        {ACTION_STATUS_LABELS[item.status]}
+                      </button>
+                      <div
+                        className={isReadOnly ? "action-item-body" : "action-item-body clickable-row"}
+                        onClick={isReadOnly ? undefined : () => setActionItemModal({ mode: "edit", item })}
+                      >
+                        <strong>{item.title}</strong>
+                        <p>{item.description}</p>
+                        <small>
+                          {item.owner ?? "Sem responsável"}
+                          {item.source ? ` · ${item.source}` : ""}
+                        </small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </article>
+          </section>
+        )}
 
         {section === "visao" && (
           <section className="page-content">
@@ -1625,27 +2227,46 @@ export function CommercialControl({
                       {dealsByStage[stage].length === 0 && (
                         <div className="kanban-empty">Nenhum negócio nesta etapa.</div>
                       )}
-                      {dealsByStage[stage].map((deal) => (
-                        <div
-                          key={deal.id}
-                          className="kanban-card"
-                          draggable={!isReadOnly}
-                          onDragStart={(event) => {
-                            event.dataTransfer.setData("text/plain", deal.id);
-                          }}
-                          onClick={isReadOnly ? undefined : () => setDealModal({ mode: "edit", deal })}
-                        >
-                          <strong>{deal.company}</strong>
-                          <span className="owner-cell">
-                            <i>{initials(deal.owner)}</i>
-                            {deal.owner}
-                          </span>
-                          <div className="kanban-card-footer">
-                            <small>{deal.month}</small>
-                            <b>{preciseCurrency.format(deal.adjusted)}</b>
+                      {dealsByStage[stage].map((deal) => {
+                        const daysInStage = Math.max(
+                          0,
+                          Math.round((now - new Date(deal.updatedAt).getTime()) / 86_400_000),
+                        );
+                        return (
+                          <div
+                            key={deal.id}
+                            className="kanban-card"
+                            draggable={!isReadOnly}
+                            onDragStart={(event) => {
+                              event.dataTransfer.setData("text/plain", deal.id);
+                            }}
+                            onClick={isReadOnly ? undefined : () => setDealModal({ mode: "edit", deal })}
+                          >
+                            <strong>{deal.company}</strong>
+                            <span className="owner-cell">
+                              <i>{initials(deal.owner)}</i>
+                              {deal.owner}
+                            </span>
+                            {deal.origin && <span className="kanban-card-origin">{deal.origin}</span>}
+                            <div className="kanban-card-meta">
+                              <span>Faturado {preciseCurrency.format(deal.billed)}</span>
+                              <span>{daysInStage}d nesta etapa</span>
+                            </div>
+                            {deal.contractSignedAt && (
+                              <div className="kanban-card-meta">
+                                <span>
+                                  Contrato{" "}
+                                  {new Date(`${deal.contractSignedAt}T00:00:00`).toLocaleDateString("pt-BR")}
+                                </span>
+                              </div>
+                            )}
+                            <div className="kanban-card-footer">
+                              <small>{deal.month}</small>
+                              <b>{preciseCurrency.format(deal.adjusted)}</b>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
@@ -2450,6 +3071,29 @@ export function CommercialControl({
             setSellerModalError(null);
           }}
           onSubmit={(values) => void addSeller(values)}
+        />
+      )}
+
+      {actionItemModal && (
+        <ActionItemModal
+          mode={actionItemModal.mode}
+          initialValues={
+            actionItemModal.mode === "create"
+              ? emptyActionItemForm(actionItemModal.defaultHorizon)
+              : formFromActionItem(actionItemModal.item)
+          }
+          saving={actionItemModalSaving}
+          errorMessage={actionItemModalError}
+          onClose={() => {
+            setActionItemModal(null);
+            setActionItemModalError(null);
+          }}
+          onSubmit={handleActionItemModalSubmit}
+          onDelete={
+            actionItemModal.mode === "edit"
+              ? () => void deleteActionItemFn(actionItemModal.item.id)
+              : undefined
+          }
         />
       )}
 

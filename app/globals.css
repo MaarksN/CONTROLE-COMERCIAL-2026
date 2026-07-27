@@ -2930,7 +2930,7 @@ button {
   border-radius: 2px;
   background: rgba(255, 86, 24, 0.14);
   color: var(--atlas-orange);
-  font-size: 10px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -2959,5 +2959,379 @@ button {
   .visao-select select {
     min-width: 0;
     width: 100%;
+  }
+}
+
+/* Sidebar brand link reset (now a <button> so it can navigate back to the cover). */
+.brand-lockup {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Cover screen */
+.cover-screen {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  padding: clamp(28px, 5vw, 64px);
+  background: var(--atlas-graphite);
+  color: var(--atlas-white);
+}
+
+.cover-hero {
+  display: flex;
+  max-width: 720px;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.cover-logo {
+  width: 180px;
+  height: auto;
+  margin-bottom: 6px;
+  padding: 14px 16px;
+  border-radius: 3px;
+  background: var(--atlas-white);
+}
+
+.cover-hero .eyebrow {
+  color: var(--atlas-orange);
+}
+
+.cover-hero h1 {
+  margin: 0;
+  font-size: clamp(32px, 4vw, 56px);
+  font-weight: 800;
+  letter-spacing: -0.05em;
+}
+
+.cover-hero p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.cover-cards {
+  display: grid;
+  width: min(1100px, 100%);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.cover-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-top: 4px solid var(--atlas-orange);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--atlas-white);
+  cursor: pointer;
+  text-align: left;
+  transition: transform 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.cover-card:hover {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 46px rgba(0, 0, 0, 0.28);
+  transform: translateY(-3px);
+}
+
+.cover-card-icon {
+  font-size: 34px;
+}
+
+.cover-card h2 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.03em;
+}
+
+.cover-card p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.cover-card-stats {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.cover-card-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cover-card-stats span {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.cover-card-stats strong {
+  font-size: 18px;
+}
+
+.cover-card-cta {
+  margin-top: 6px;
+  color: var(--atlas-orange);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.cover-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+}
+
+/* Dashboard section */
+.dashboard-note {
+  margin: 0;
+  padding: 14px 18px;
+  border-left: 3px solid var(--atlas-orange);
+  background: #fff6f1;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.dashboard-months-panel {
+  padding: 25px;
+}
+
+.positive-delta {
+  color: var(--atlas-success);
+  font-weight: 750;
+}
+
+.negative-delta {
+  color: var(--atlas-danger);
+  font-weight: 750;
+}
+
+.dashboard-bottleneck-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.dashboard-bottleneck-grid .panel {
+  padding: 25px;
+}
+
+.bottleneck-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.bottleneck-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px 15px;
+  border-left: 3px solid var(--atlas-line);
+  background: #f7f5f1;
+}
+
+.bottleneck-item strong {
+  font-size: 14px;
+}
+
+.bottleneck-item p {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.bottleneck-item.severity-alta {
+  border-left-color: var(--atlas-danger);
+  background: #fff0ea;
+}
+
+.bottleneck-item.severity-média {
+  border-left-color: var(--atlas-amber-2);
+  background: #fff6d8;
+}
+
+.bottleneck-item.severity-baixa {
+  border-left-color: #b1aea7;
+  background: #f0eee9;
+}
+
+/* Action plan */
+.action-plan-panel {
+  padding: 25px;
+}
+
+.action-horizon-group {
+  margin-top: 22px;
+}
+
+.action-horizon-group:first-of-type {
+  margin-top: 20px;
+}
+
+.action-horizon-group h4 {
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--atlas-line);
+  color: var(--atlas-ink);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.action-empty {
+  margin: 0 0 8px;
+  color: var(--atlas-muted);
+  font-size: 13px;
+}
+
+.action-item-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  padding: 14px 0;
+  border-top: 1px solid #ece9e3;
+}
+
+.action-item-row:first-of-type {
+  border-top: 0;
+}
+
+.status-chip {
+  padding: 8px 10px;
+  border: 0;
+  background: #efede8;
+  color: var(--atlas-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.status-chip:disabled {
+  cursor: default;
+}
+
+.status-chip.status-pendente {
+  background: #efede8;
+  color: var(--atlas-muted);
+}
+
+.status-chip.status-andamento {
+  background: #fff5d8;
+  color: #926900;
+}
+
+.status-chip.status-concluido {
+  background: #e9f7f1;
+  color: var(--atlas-success);
+}
+
+.action-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.action-item-body.clickable-row {
+  cursor: pointer;
+}
+
+.action-item-body strong {
+  font-size: 15px;
+}
+
+.action-item-body p {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.action-item-body small {
+  color: #a29f98;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+/* Kanban card enrichment */
+.kanban-card-origin {
+  color: var(--atlas-muted);
+  font-size: 11px;
+}
+
+.kanban-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--atlas-muted);
+  font-size: 11px;
+}
+
+@media (max-width: 1240px) {
+  .dashboard-bottleneck-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .cover-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .action-item-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .status-chip {
+    justify-self: start;
+    width: auto;
+    min-width: 130px;
+  }
+}
+
+@media (max-width: 640px) {
+  .cover-screen {
+    gap: 32px;
+  }
+
+  .cover-card {
+    padding: 24px;
+  }
+
+  .cover-card-stats {
+    grid-template-columns: 1fr;
   }
 }

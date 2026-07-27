@@ -47,6 +47,7 @@ export type CommercialData = {
   ownerPerformance: OwnerPerformance[];
   originPerformance: OriginPerformance[];
   sellers: Seller[];
+  actionItems: ActionItem[];
   objectives: StaticData["objectives"];
   governance: StaticData["governance"];
   dataQualityIssues: StaticData["dataQualityIssues"];
@@ -72,6 +73,39 @@ type CommercialDealRow = {
   updated_at: string;
   payload_json: string;
 };
+
+type ActionItemRow = {
+  id: string;
+  title: string;
+  description: string;
+  owner: string | null;
+  horizon: string;
+  status: string;
+  source: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function rowToActionItem(row: ActionItemRow): ActionItem {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    owner: row.owner,
+    horizon: row.horizon as ActionHorizon,
+    status: row.status as ActionStatus,
+    source: row.source,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+  };
+}
+
+const ACTION_ITEM_COLUMNS =
+  "id, title, description, owner, horizon, status, source, created_by, updated_by, created_at, updated_at";
 
 type TargetRow = { year: number; month_number: number; month: string; target: number };
 type D1Row = { payload_json: string };
@@ -291,6 +325,142 @@ export async function addSellerToRoster(database: D1Database, seller: Seller): P
   return next;
 }
 
+/**
+ * Additive: seeds the action plan from the Bitrix24 90-day roadmap only once
+ * (guarded by its own app_state key). Never re-runs, so items created or
+ * edited later by users are never overwritten by a redeploy.
+ */
+async function ensureActionItemsSeed(database: D1Database) {
+  const current = await database
+    .prepare("SELECT value FROM app_state WHERE key = ?")
+    .bind(ACTION_ITEMS_SEED_KEY)
+    .first<{ value: string }>();
+  if (current) return;
+
+  await runBatches(
+    database,
+    DEFAULT_ACTION_PLAN.map((item) =>
+      database
+        .prepare(
+          `INSERT INTO action_items (${ACTION_ITEM_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        )
+        .bind(
+          crypto.randomUUID(),
+          item.title,
+          item.description,
+          item.owner,
+          item.horizon,
+          "pendente",
+          item.source,
+          "import",
+          "import",
+        ),
+    ),
+  );
+
+  await database
+    .prepare(
+      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
+    )
+    .bind(ACTION_ITEMS_SEED_KEY, "done")
+    .run();
+}
+
+export async function readActionItems(database: D1Database): Promise<ActionItem[]> {
+  await ensureActionItemsSeed(database);
+  const rows = await database
+    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items ORDER BY horizon, created_at`)
+    .all<ActionItemRow>();
+  return rows.results.map(rowToActionItem);
+}
+
+export async function addActionItem(
+  database: D1Database,
+  input: {
+    title: string;
+    description: string;
+    owner: string | null;
+    horizon: ActionHorizon;
+    source: string | null;
+    actorEmail: string;
+  },
+): Promise<ActionItem> {
+  const id = crypto.randomUUID();
+  await database
+    .prepare(
+      `INSERT INTO action_items (${ACTION_ITEM_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    )
+    .bind(
+      id,
+      input.title,
+      input.description,
+      input.owner,
+      input.horizon,
+      "pendente",
+      input.source,
+      input.actorEmail,
+      input.actorEmail,
+    )
+    .run();
+
+  const row = await database
+    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
+    .bind(id)
+    .first<ActionItemRow>();
+  if (!row) throw new Error("Falha ao criar item do plano de ação.");
+  return rowToActionItem(row);
+}
+
+export async function updateActionItem(
+  database: D1Database,
+  id: string,
+  patch: Partial<{
+    title: string;
+    description: string;
+    owner: string | null;
+    horizon: ActionHorizon;
+    status: ActionStatus;
+  }>,
+  actorEmail: string,
+): Promise<ActionItem | null> {
+  const existing = await database
+    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
+    .bind(id)
+    .first<ActionItemRow>();
+  if (!existing) return null;
+
+  const next = {
+    title: patch.title ?? existing.title,
+    description: patch.description ?? existing.description,
+    owner: patch.owner !== undefined ? patch.owner : existing.owner,
+    horizon: patch.horizon ?? existing.horizon,
+    status: patch.status ?? existing.status,
+  };
+
+  await database
+    .prepare(
+      "UPDATE action_items SET title = ?, description = ?, owner = ?, horizon = ?, status = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    )
+    .bind(next.title, next.description, next.owner, next.horizon, next.status, actorEmail, id)
+    .run();
+
+  const row = await database
+    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
+    .bind(id)
+    .first<ActionItemRow>();
+  return row ? rowToActionItem(row) : null;
+}
+
+export async function deleteActionItem(database: D1Database, id: string): Promise<ActionItem | null> {
+  const existing = await database
+    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
+    .bind(id)
+    .first<ActionItemRow>();
+  if (!existing) return null;
+  await database.prepare("DELETE FROM action_items WHERE id = ?").bind(id).run();
+  return rowToActionItem(existing);
+}
+
 function parsePayloads<T>(rows: D1Row[]): T[] {
   return rows.map((row) => JSON.parse(row.payload_json) as T);
 }
@@ -372,6 +542,19 @@ function buildFromStaticJson(asOf: string): CommercialData {
     asOf,
     knownOwners: sellers.map((seller) => seller.name),
   });
+  const actionItems: ActionItem[] = DEFAULT_ACTION_PLAN.map((item, index) => ({
+    id: `static-action-${index}`,
+    title: item.title,
+    description: item.description,
+    owner: item.owner,
+    horizon: item.horizon,
+    status: "pendente",
+    source: item.source,
+    createdAt: commercialDataJson.meta.generatedAt,
+    updatedAt: commercialDataJson.meta.generatedAt,
+    createdBy: "import",
+    updatedBy: "import",
+  }));
 
   return {
     meta: commercialDataJson.meta,
@@ -381,6 +564,7 @@ function buildFromStaticJson(asOf: string): CommercialData {
     deals2026: deals,
     historicalDeals: commercialDataJson.historicalDeals,
     sellers,
+    actionItems,
     objectives: commercialDataJson.objectives,
     governance: commercialDataJson.governance,
     dataQualityIssues: commercialDataJson.dataQualityIssues,
@@ -397,8 +581,9 @@ export async function loadCommercialData(): Promise<CommercialData> {
     // Sequenced: readDealsAndTargets() runs ensureSeeded()/ensureStageBackfill()
     // first, which the objectives/workbook queries below depend on existing.
     const { deals, targets } = await readDealsAndTargets(env.DB);
-    const [sellers, objectiveResult, workbookResult] = await Promise.all([
+    const [sellers, actionItems, objectiveResult, workbookResult] = await Promise.all([
       readSellerRoster(env.DB),
+      readActionItems(env.DB),
       env.DB.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>(),
       env.DB.prepare(
         "SELECT sheet_name, row_number, data_json, formula_json FROM workbook_rows ORDER BY id",
@@ -445,6 +630,7 @@ export async function loadCommercialData(): Promise<CommercialData> {
       deals2026: deals,
       historicalDeals: commercialDataJson.historicalDeals,
       sellers,
+      actionItems,
       objectives: parsePayloads<StaticData["objectives"][number]>(objectiveResult.results),
       governance: commercialDataJson.governance,
       dataQualityIssues: commercialDataJson.dataQualityIssues,
