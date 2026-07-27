@@ -1,10 +1,79 @@
 import { env } from "cloudflare:workers";
-import commercialData from "../app/data/commercial-data.json";
+import commercialDataJson from "../app/data/commercial-data.json";
+import {
+  deriveMetrics,
+  inferStage,
+  type Deal,
+  type ExecutiveSummary,
+  type MonthlyMetric,
+  type OriginPerformance,
+  type OwnerPerformance,
+  type Seller,
+  type Target,
+} from "../app/deriveMetrics";
+import {
+  DEFAULT_ACTION_PLAN,
+  type ActionHorizon,
+  type ActionItem,
+  type ActionStatus,
+} from "../app/deriveDashboard";
 
 const SEED_VERSION = "atlas-commercial-2026-v1";
+const STAGE_BACKFILL_KEY = "stage_backfill_v1";
+const SELLER_ROSTER_KEY = "team_roster";
+const ACTION_ITEMS_SEED_KEY = "action_items_seed_v1";
 const BATCH_SIZE = 40;
 
-type SeedData = typeof commercialData;
+function defaultSellerRoster(): Seller[] {
+  const names = [...new Set(commercialDataJson.deals2026.map((deal) => deal.owner))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "pt-BR"));
+  return [
+    ...names.map((name) => ({ name, role: "Vendedor" as const })),
+    { name: "João Reis", role: "SDR" as const },
+  ];
+}
+
+type StaticData = typeof commercialDataJson;
+
+export type CommercialData = {
+  meta: StaticData["meta"];
+  asOf: string;
+  executiveSummary: ExecutiveSummary;
+  monthlyMetrics: MonthlyMetric[];
+  targets: Target[];
+  deals2026: Deal[];
+  historicalDeals: StaticData["historicalDeals"];
+  ownerPerformance: OwnerPerformance[];
+  originPerformance: OriginPerformance[];
+  sellers: Seller[];
+  objectives: StaticData["objectives"];
+  governance: StaticData["governance"];
+  dataQualityIssues: StaticData["dataQualityIssues"];
+  rawSheets: StaticData["rawSheets"];
+};
+
+type CommercialDealRow = {
+  id: string;
+  year: number;
+  month_number: number;
+  month: string;
+  owner: string;
+  company: string;
+  origin: string;
+  sold: number;
+  adjusted: number;
+  billed: number;
+  stage: string;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  payload_json: string;
+};
+
+type TargetRow = { year: number; month_number: number; month: string; target: number };
 type D1Row = { payload_json: string };
 type WorkbookRow = {
   sheet_name: string;
@@ -13,10 +82,7 @@ type WorkbookRow = {
   formula_json: string;
 };
 
-async function runBatches(
-  database: D1Database,
-  statements: D1PreparedStatement[],
-) {
+async function runBatches(database: D1Database, statements: D1PreparedStatement[]) {
   for (let index = 0; index < statements.length; index += BATCH_SIZE) {
     await database.batch(statements.slice(index, index + BATCH_SIZE));
   }
@@ -39,7 +105,7 @@ async function ensureSeeded(database: D1Database) {
 
   await runBatches(
     database,
-    commercialData.monthlyMetrics.map((metric) =>
+    commercialDataJson.monthlyMetrics.map((metric) =>
       database
         .prepare(
           "INSERT INTO monthly_metrics (year, month_number, month, target, sold, adjusted, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -58,10 +124,10 @@ async function ensureSeeded(database: D1Database) {
 
   await runBatches(
     database,
-    commercialData.deals2026.map((deal) =>
+    commercialDataJson.deals2026.map((deal) =>
       database
         .prepare(
-          "INSERT INTO commercial_deals (id, year, month_number, month, owner, company, origin, sold, adjusted, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO commercial_deals (id, year, month_number, month, owner, company, origin, sold, adjusted, billed, stage, created_by, updated_by, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(
           deal.id,
@@ -73,12 +139,16 @@ async function ensureSeeded(database: D1Database) {
           deal.origin,
           deal.sold,
           deal.adjusted,
+          deal.billed,
+          inferStage(deal),
+          "import",
+          "import",
           JSON.stringify(deal),
         ),
     ),
   );
 
-  const workbookStatements = commercialData.rawSheets.flatMap((sheet) =>
+  const workbookStatements = commercialDataJson.rawSheets.flatMap((sheet) =>
     sheet.rows.map((row, index) =>
       database
         .prepare(
@@ -96,7 +166,7 @@ async function ensureSeeded(database: D1Database) {
 
   await runBatches(
     database,
-    commercialData.objectives.map((objective) =>
+    commercialDataJson.objectives.map((objective) =>
       database
         .prepare(
           "INSERT INTO objectives (id, title, owner, progress, payload_json) VALUES (?, ?, ?, ?, ?)",
@@ -119,31 +189,228 @@ async function ensureSeeded(database: D1Database) {
     .run();
 }
 
+/**
+ * Additive, non-destructive backfill: `ALTER TABLE ... ADD COLUMN stage
+ * DEFAULT 'aberto'` sets every pre-existing row to "aberto" regardless of
+ * its actual billing state. This runs once (guarded by its own app_state
+ * key, never `SEED_VERSION`) to recompute the correct stage for rows that
+ * predate the stage column, without ever touching the destructive
+ * delete-and-reinsert path in `ensureSeeded` — that path must stay
+ * untouched once real user-created deals can exist in the table.
+ */
+async function ensureStageBackfill(database: D1Database) {
+  const current = await database
+    .prepare("SELECT value FROM app_state WHERE key = ?")
+    .bind(STAGE_BACKFILL_KEY)
+    .first<{ value: string }>();
+
+  if (current?.value === "done") return;
+
+  const rows = await database
+    .prepare("SELECT id, billed, payload_json FROM commercial_deals")
+    .all<{ id: string; billed: number; payload_json: string }>();
+
+  const statements = rows.results.map((row) => {
+    const extra = JSON.parse(row.payload_json) as {
+      contractSigned?: string;
+      contractSignedAt?: string | null;
+      billingStatus?: string;
+    };
+    const stage = inferStage({
+      billed: row.billed,
+      contractSigned: extra.contractSigned,
+      contractSignedAt: extra.contractSignedAt,
+      billingStatus: extra.billingStatus,
+    });
+    return database
+      .prepare("UPDATE commercial_deals SET stage = ? WHERE id = ?")
+      .bind(stage, row.id);
+  });
+  await runBatches(database, statements);
+
+  await database
+    .prepare(
+      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(STAGE_BACKFILL_KEY, "done")
+    .run();
+}
+
+/**
+ * Additive: seeds the team roster only if the `app_state` key doesn't exist
+ * yet — never overwrites, so sellers added later via `POST /api/sellers`
+ * are never clobbered by a redeploy.
+ */
+async function ensureSellerRoster(database: D1Database) {
+  const current = await database
+    .prepare("SELECT value FROM app_state WHERE key = ?")
+    .bind(SELLER_ROSTER_KEY)
+    .first<{ value: string }>();
+  if (current) return;
+
+  await database
+    .prepare(
+      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
+    )
+    .bind(SELLER_ROSTER_KEY, JSON.stringify(defaultSellerRoster()))
+    .run();
+}
+
+export async function readSellerRoster(database: D1Database): Promise<Seller[]> {
+  await ensureSellerRoster(database);
+  const row = await database
+    .prepare("SELECT value FROM app_state WHERE key = ?")
+    .bind(SELLER_ROSTER_KEY)
+    .first<{ value: string }>();
+  if (!row) return [];
+  try {
+    return JSON.parse(row.value) as Seller[];
+  } catch {
+    return [];
+  }
+}
+
+export async function addSellerToRoster(database: D1Database, seller: Seller): Promise<Seller[]> {
+  const roster = await readSellerRoster(database);
+  const exists = roster.some((item) => item.name.toLocaleLowerCase("pt-BR") === seller.name.toLocaleLowerCase("pt-BR"));
+  const next = exists
+    ? roster.map((item) =>
+        item.name.toLocaleLowerCase("pt-BR") === seller.name.toLocaleLowerCase("pt-BR")
+          ? seller
+          : item,
+      )
+    : [...roster, seller];
+
+  await database
+    .prepare(
+      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(SELLER_ROSTER_KEY, JSON.stringify(next))
+    .run();
+
+  return next;
+}
+
 function parsePayloads<T>(rows: D1Row[]): T[] {
   return rows.map((row) => JSON.parse(row.payload_json) as T);
 }
 
-export async function loadCommercialData(): Promise<SeedData> {
-  if (!env.DB) return commercialData;
+export function rowToDeal(row: CommercialDealRow): Deal {
+  const extra = JSON.parse(row.payload_json) as Record<string, unknown>;
+  return {
+    ...extra,
+    id: row.id,
+    year: row.year,
+    month: row.month,
+    monthNumber: row.month_number,
+    owner: row.owner,
+    company: row.company,
+    origin: row.origin,
+    sold: row.sold,
+    adjusted: row.adjusted,
+    billed: row.billed,
+    stage: row.stage,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+  } as Deal;
+}
+
+/** Shared by `loadCommercialData()` and the polling `GET /api/deals` route. */
+export async function readDealsAndTargets(
+  database: D1Database,
+): Promise<{ deals: Deal[]; targets: Target[] }> {
+  await ensureSeeded(database);
+  await ensureStageBackfill(database);
+
+  const [dealResult, targetResult] = await Promise.all([
+    database
+      .prepare(
+        "SELECT id, year, month_number, month, owner, company, origin, sold, adjusted, billed, stage, notes, created_by, updated_by, created_at, updated_at, payload_json FROM commercial_deals ORDER BY month_number, id",
+      )
+      .all<CommercialDealRow>(),
+    database
+      .prepare("SELECT year, month_number, month, target FROM monthly_metrics ORDER BY month_number")
+      .all<TargetRow>(),
+  ]);
+
+  const deals = dealResult.results.map(rowToDeal);
+  const targets: Target[] = targetResult.results.map((row) => ({
+    year: row.year,
+    monthNumber: row.month_number,
+    month: row.month,
+    target: row.target,
+  }));
+
+  return { deals, targets };
+}
+
+function buildFromStaticJson(asOf: string): CommercialData {
+  const deals: Deal[] = commercialDataJson.deals2026.map((deal) => ({
+    ...deal,
+    stage: inferStage(deal),
+    notes: null,
+    createdAt: commercialDataJson.meta.generatedAt,
+    updatedAt: commercialDataJson.meta.generatedAt,
+    createdBy: "import",
+    updatedBy: "import",
+  })) as Deal[];
+
+  const targets: Target[] = commercialDataJson.monthlyMetrics.map((metric) => ({
+    year: 2026,
+    monthNumber: metric.monthNumber,
+    month: metric.month,
+    target: metric.target,
+  }));
+
+  const sellers = defaultSellerRoster();
+  const derived = deriveMetrics({
+    deals,
+    targets,
+    asOf,
+    knownOwners: sellers.map((seller) => seller.name),
+  });
+
+  return {
+    meta: commercialDataJson.meta,
+    asOf,
+    ...derived,
+    targets,
+    deals2026: deals,
+    historicalDeals: commercialDataJson.historicalDeals,
+    sellers,
+    objectives: commercialDataJson.objectives,
+    governance: commercialDataJson.governance,
+    dataQualityIssues: commercialDataJson.dataQualityIssues,
+    rawSheets: commercialDataJson.rawSheets,
+  };
+}
+
+export async function loadCommercialData(): Promise<CommercialData> {
+  const asOf = new Date().toISOString();
+
+  if (!env.DB) return buildFromStaticJson(asOf);
 
   try {
-    await ensureSeeded(env.DB);
+    // Sequenced: readDealsAndTargets() runs ensureSeeded()/ensureStageBackfill()
+    // first, which the objectives/workbook queries below depend on existing.
+    const { deals, targets } = await readDealsAndTargets(env.DB);
+    const [sellers, objectiveResult, workbookResult] = await Promise.all([
+      readSellerRoster(env.DB),
+      env.DB.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>(),
+      env.DB.prepare(
+        "SELECT sheet_name, row_number, data_json, formula_json FROM workbook_rows ORDER BY id",
+      ).all<WorkbookRow>(),
+    ]);
 
-    const [metricResult, dealResult, objectiveResult, workbookResult] =
-      await Promise.all([
-        env.DB.prepare(
-          "SELECT payload_json FROM monthly_metrics ORDER BY month_number",
-        ).all<D1Row>(),
-        env.DB.prepare(
-          "SELECT payload_json FROM commercial_deals ORDER BY month_number, id",
-        ).all<D1Row>(),
-        env.DB.prepare(
-          "SELECT payload_json FROM objectives ORDER BY id",
-        ).all<D1Row>(),
-        env.DB.prepare(
-          "SELECT sheet_name, row_number, data_json, formula_json FROM workbook_rows ORDER BY id",
-        ).all<WorkbookRow>(),
-      ]);
+    const derived = deriveMetrics({
+      deals,
+      targets,
+      asOf,
+      knownOwners: sellers.map((seller) => seller.name),
+    });
 
     const rawRows = new Map<
       string,
@@ -159,7 +426,7 @@ export async function loadCommercialData(): Promise<SeedData> {
       rawRows.set(row.sheet_name, rows);
     }
 
-    const rawSheets = commercialData.rawSheets.map((sheet) => {
+    const rawSheets = commercialDataJson.rawSheets.map((sheet) => {
       const rows = rawRows.get(sheet.name);
       if (!rows?.length) return sheet;
       rows.sort((a, b) => a.rowNumber - b.rowNumber);
@@ -171,19 +438,19 @@ export async function loadCommercialData(): Promise<SeedData> {
     });
 
     return {
-      ...commercialData,
-      monthlyMetrics: parsePayloads<
-        SeedData["monthlyMetrics"][number]
-      >(metricResult.results),
-      deals2026: parsePayloads<SeedData["deals2026"][number]>(
-        dealResult.results,
-      ),
-      objectives: parsePayloads<SeedData["objectives"][number]>(
-        objectiveResult.results,
-      ),
+      meta: commercialDataJson.meta,
+      asOf,
+      ...derived,
+      targets,
+      deals2026: deals,
+      historicalDeals: commercialDataJson.historicalDeals,
+      sellers,
+      objectives: parsePayloads<StaticData["objectives"][number]>(objectiveResult.results),
+      governance: commercialDataJson.governance,
+      dataQualityIssues: commercialDataJson.dataQualityIssues,
       rawSheets,
     };
   } catch {
-    return commercialData;
+    return buildFromStaticJson(asOf);
   }
 }

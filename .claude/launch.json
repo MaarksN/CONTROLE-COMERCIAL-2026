@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "atlas-crm-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vinext", "dev", "--port", "4173"],
+      "port": 4173
+    }
+  ]
+}

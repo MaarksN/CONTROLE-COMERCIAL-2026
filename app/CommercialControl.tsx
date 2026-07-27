@@ -1,6 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  deriveMetrics,
+  MONTH_NAMES,
+  STAGES,
+  STAGE_LABELS,
+  type Deal,
+  type MonthlyMetric,
+  type Seller,
+  type SellerRole,
+  type Stage,
+  type Target,
+} from "./deriveMetrics";
+import type { CommercialData } from "@/db/commercial-data";
 
 type User = {
   displayName: string;
@@ -8,133 +21,14 @@ type User = {
   isPreview: boolean;
 };
 
-type MonthlyMetric = {
-  month: string;
-  monthNumber: number;
-  target: number;
-  sold: number;
-  adjusted: number;
-  adjustmentRate: number;
-  gap: number;
-  attainment: number;
-  health: string;
-};
-
-type Deal = {
-  id: string;
-  month: string;
-  monthNumber: number;
-  owner: string;
-  company: string;
-  origin: string;
-  sold: number;
-  governedSold: number;
-  adjusted: number;
-  proposalAcceptedAt: string | null;
-  contractSignedAt: string | null;
-  billed: number;
-  variance: number;
-  billingStatus: string;
-};
-
-type HistoricalDeal = {
-  id: string;
-  semester: number;
-  company: string;
-  sold: number;
-  billed: number;
-  soldAt: string | null;
-  owner: string;
-};
-
-type KeyResult = {
-  title: string;
-  actual: number;
-  target: number;
-  unit: string;
-  inverse?: boolean;
-};
-
-type Objective = {
-  id: string;
-  title: string;
-  owner: string;
-  cadence: string;
-  progress: number;
-  keyResults: KeyResult[];
-};
-
-type RawSheet = {
-  name: string;
-  rowCount: number;
-  columnCount: number;
-  nonEmptyCells: number;
-  formulaCells: number;
-  rows: unknown[][];
-  formulas: unknown[][];
-};
-
-type CommercialData = {
-  meta: {
-    sourceFile: string;
-    generatedAt: string;
-    workbookSheets: number;
-    importedCells: number;
-    formulaCells: number;
-    records2026: number;
-    historicalRecords: number;
-  };
-  executiveSummary: {
-    ytdTarget: number;
-    ytdSold: number;
-    ytdAdjusted: number;
-    ytdGap: number;
-    attainment: number;
-    realization: number;
-    averageSalesCycle: number;
-    julyForecast: number;
-    julyPending: number;
-  };
-  monthlyMetrics: MonthlyMetric[];
-  deals2026: Deal[];
-  historicalDeals: HistoricalDeal[];
-  ownerPerformance: Array<{
-    owner: string;
-    deals: number;
-    sold: number;
-    adjusted: number;
-    billed: number;
-  }>;
-  originPerformance: Array<{
-    origin: string;
-    deals: number;
-    adjusted: number;
-  }>;
-  objectives: Objective[];
-  governance: {
-    operatingRhythm: Array<{
-      cadence: string;
-      ritual: string;
-      owner: string;
-      evidence: string;
-    }>;
-    roles: Array<{
-      role: string;
-      view: boolean;
-      edit: boolean;
-      approve: boolean;
-      manageUsers: boolean;
-    }>;
-    approvalRules: string[];
-  };
-  dataQualityIssues: Array<{
-    severity: string;
-    category: string;
-    title: string;
-    description: string;
-    owner: string;
-  }>;
-  rawSheets: RawSheet[];
+type ActivityEntry = {
+  id: number;
+  actorEmail: string;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  detailJson: string;
+  createdAt: string;
 };
 
 type Section =
@@ -171,6 +65,22 @@ const percent = new Intl.NumberFormat("pt-BR", {
   maximumFractionDigits: 1,
 });
 
+const ACTION_LABELS: Record<string, string> = {
+  "deal.create": "criou o negócio",
+  "deal.update": "atualizou o negócio",
+  "deal.stage_move": "moveu a etapa do negócio",
+  "deal.delete": "excluiu o negócio",
+  "target.update": "atualizou a meta",
+  "seller.create": "adicionou o vendedor",
+};
+
+const STAGE_PILL_CLASS: Record<Stage, string> = {
+  aberto: "",
+  ganho: "info",
+  faturado: "waiting",
+  pago: "positive",
+};
+
 function initials(name: string) {
   return name
     .split(/\s+/)
@@ -195,27 +105,41 @@ function healthLabel(value: number) {
   return "Ação necessária";
 }
 
-function downloadCsv(deals: Deal[]) {
+function timeAgoLabel(seconds: number) {
+  if (seconds < 5) return "agora";
+  if (seconds < 60) return `há ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `há ${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  return `há ${hours}h`;
+}
+
+function relativeTimestamp(iso: string) {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  return timeAgoLabel(seconds);
+}
+
+function downloadCsv(deals: Deal[], filename: string) {
   const rows = [
     [
       "Mês",
       "Empresa",
       "Responsável",
       "Origem",
+      "Etapa",
       "Valor vendido",
       "Valor ajustado",
       "Faturado",
-      "Status",
     ],
     ...deals.map((deal) => [
       deal.month,
       deal.company,
       deal.owner,
       deal.origin,
+      STAGE_LABELS[deal.stage],
       deal.sold,
       deal.adjusted,
       deal.billed,
-      deal.billingStatus,
     ]),
   ];
   const csv = rows
@@ -225,23 +149,435 @@ function downloadCsv(deals: Deal[]) {
         .join(";"),
     )
     .join("\n");
-  const blob = new Blob([`\uFEFF${csv}`], {
+  const blob = new Blob([`﻿${csv}`], {
     type: "text/csv;charset=utf-8",
   });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = "atlas-negocios-2026.csv";
+  anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+type DealFormValues = {
+  company: string;
+  owner: string;
+  origin: string;
+  monthNumber: number;
+  sold: string;
+  adjusted: string;
+  billed: string;
+  stage: Stage;
+  notes: string;
+  proposalAcceptedAt: string;
+  contractSignedAt: string;
+};
+
+function emptyForm(defaults: { monthNumber?: number; stage?: Stage }): DealFormValues {
+  return {
+    company: "",
+    owner: "",
+    origin: "",
+    monthNumber: defaults.monthNumber ?? new Date().getMonth() + 1,
+    sold: "",
+    adjusted: "",
+    billed: "0",
+    stage: defaults.stage ?? "aberto",
+    notes: "",
+    proposalAcceptedAt: "",
+    contractSignedAt: "",
+  };
+}
+
+function formFromDeal(deal: Deal): DealFormValues {
+  return {
+    company: deal.company,
+    owner: deal.owner,
+    origin: deal.origin,
+    monthNumber: deal.monthNumber,
+    sold: String(deal.sold),
+    adjusted: String(deal.adjusted),
+    billed: String(deal.billed),
+    stage: deal.stage,
+    notes: deal.notes ?? "",
+    proposalAcceptedAt: deal.proposalAcceptedAt ?? "",
+    contractSignedAt: deal.contractSignedAt ?? "",
+  };
+}
+
+function DealModal({
+  mode,
+  initialValues,
+  owners,
+  origins,
+  saving,
+  errorMessage,
+  onClose,
+  onSubmit,
+  onDelete,
+}: {
+  mode: "create" | "edit";
+  initialValues: DealFormValues;
+  owners: string[];
+  origins: string[];
+  saving: boolean;
+  errorMessage: string | null;
+  onClose: () => void;
+  onSubmit: (values: DealFormValues) => void;
+  onDelete?: () => void;
+}) {
+  const [values, setValues] = useState(initialValues);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <h3>{mode === "create" ? "Novo negócio" : "Editar negócio"}</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <form
+          className="modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit(values);
+          }}
+        >
+          <label>
+            <span>Empresa</span>
+            <input
+              value={values.company}
+              onChange={(event) => setValues({ ...values, company: event.target.value })}
+              required
+            />
+          </label>
+          <label>
+            <span>Responsável</span>
+            <input
+              value={values.owner}
+              onChange={(event) => setValues({ ...values, owner: event.target.value })}
+              list="owners-datalist"
+              required
+            />
+          </label>
+          <label>
+            <span>Origem</span>
+            <input
+              value={values.origin}
+              onChange={(event) => setValues({ ...values, origin: event.target.value })}
+              list="origins-datalist"
+            />
+          </label>
+          <label>
+            <span>Mês</span>
+            <select
+              value={values.monthNumber}
+              onChange={(event) =>
+                setValues({ ...values, monthNumber: Number(event.target.value) })
+              }
+            >
+              {MONTH_NAMES.map((name, index) => (
+                <option key={name} value={index + 1}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Etapa</span>
+            <select
+              value={values.stage}
+              onChange={(event) =>
+                setValues({ ...values, stage: event.target.value as Stage })
+              }
+            >
+              {STAGES.map((stage) => (
+                <option key={stage} value={stage}>
+                  {STAGE_LABELS[stage]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Valor vendido (R$)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={values.sold}
+              onChange={(event) => setValues({ ...values, sold: event.target.value })}
+              required
+            />
+          </label>
+          <label>
+            <span>Valor ajustado (R$)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={values.adjusted}
+              onChange={(event) => setValues({ ...values, adjusted: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Faturado (R$)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={values.billed}
+              onChange={(event) => setValues({ ...values, billed: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Proposta aceita em</span>
+            <input
+              type="date"
+              value={values.proposalAcceptedAt}
+              onChange={(event) =>
+                setValues({ ...values, proposalAcceptedAt: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            <span>Contrato assinado em</span>
+            <input
+              type="date"
+              value={values.contractSignedAt}
+              onChange={(event) =>
+                setValues({ ...values, contractSignedAt: event.target.value })
+              }
+            />
+          </label>
+          <label className="modal-form-notes">
+            <span>Notas</span>
+            <textarea
+              rows={3}
+              value={values.notes}
+              onChange={(event) => setValues({ ...values, notes: event.target.value })}
+            />
+          </label>
+
+          {errorMessage && <p className="modal-error">{errorMessage}</p>}
+
+          <div className="modal-actions">
+            {mode === "edit" && onDelete && (
+              <button
+                type="button"
+                className={confirmingDelete ? "modal-delete confirming" : "modal-delete"}
+                onClick={() => {
+                  if (confirmingDelete) {
+                    onDelete();
+                  } else {
+                    setConfirmingDelete(true);
+                    setTimeout(() => setConfirmingDelete(false), 4000);
+                  }
+                }}
+              >
+                {confirmingDelete ? "Confirmar exclusão" : "Excluir"}
+              </button>
+            )}
+            <div className="modal-actions-right">
+              <button type="button" className="modal-cancel" onClick={onClose}>
+                Cancelar
+              </button>
+              <button type="submit" className="primary-button" disabled={saving}>
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+      <datalist id="owners-datalist">
+        {owners.map((owner) => (
+          <option key={owner} value={owner} />
+        ))}
+      </datalist>
+      <datalist id="origins-datalist">
+        {origins.map((origin) => (
+          <option key={origin} value={origin} />
+        ))}
+      </datalist>
+    </div>
+  );
+}
+
+function TargetEditable({
+  label,
+  target,
+  disabled,
+  onSave,
+}: {
+  label: string;
+  target: number;
+  disabled: boolean;
+  onSave: (value: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(target));
+
+  if (disabled) return <strong>{label}</strong>;
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="target-edit-trigger"
+        title="Clique para editar a meta"
+        onClick={() => {
+          setValue(String(target));
+          setEditing(true);
+        }}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      className="target-edit-input"
+      type="number"
+      min="0"
+      step="1"
+      autoFocus
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+      onBlur={() => {
+        setEditing(false);
+        const parsed = Number(value);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed !== target) {
+          onSave(parsed);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") setEditing(false);
+      }}
+    />
+  );
+}
+
+function buildSellerSummary(sellerDeals: Deal[], monthlyMetricsList: MonthlyMetric[]) {
+  const sold = sellerDeals.reduce((sum, deal) => sum + deal.sold, 0);
+  const adjusted = sellerDeals.reduce((sum, deal) => sum + deal.adjusted, 0);
+  const billed = sellerDeals.reduce((sum, deal) => sum + deal.billed, 0);
+  const cycles = sellerDeals
+    .map((deal) => {
+      if (!deal.proposalAcceptedAt || !deal.contractSignedAt) return null;
+      const start = new Date(`${deal.proposalAcceptedAt}T00:00:00`);
+      const end = new Date(`${deal.contractSignedAt}T00:00:00`);
+      return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86_400_000));
+    })
+    .filter((days): days is number => days !== null);
+  const origins = sellerDeals.reduce<Record<string, number>>((accumulator, deal) => {
+    const origin = deal.origin || "Não informado";
+    accumulator[origin] = (accumulator[origin] ?? 0) + 1;
+    return accumulator;
+  }, {});
+  const topOrigin = Object.entries(origins).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Sem dados";
+  const months = monthlyMetricsList.map((metric) => {
+    const monthDeals = sellerDeals.filter((deal) => deal.monthNumber === metric.monthNumber);
+    return {
+      month: metric.month,
+      shortMonth: metric.month.slice(0, 3),
+      deals: monthDeals.length,
+      adjusted: monthDeals.reduce((sum, deal) => sum + deal.adjusted, 0),
+    };
+  });
+
+  return {
+    sold,
+    adjusted,
+    billed,
+    dealsCount: sellerDeals.length,
+    ticket: sellerDeals.length ? adjusted / sellerDeals.length : 0,
+    realization: sold ? adjusted / sold : 0,
+    averageCycle: cycles.length ? cycles.reduce((sum, days) => sum + days, 0) / cycles.length : 0,
+    waiting: sellerDeals.filter((deal) => deal.stage === "faturado").length,
+    topOrigin,
+    months,
+  };
+}
+
+function SellerModal({
+  saving,
+  errorMessage,
+  onClose,
+  onSubmit,
+}: {
+  saving: boolean;
+  errorMessage: string | null;
+  onClose: () => void;
+  onSubmit: (values: { name: string; role: SellerRole }) => void;
+}) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<SellerRole>("Vendedor");
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-small" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <h3>Adicionar vendedor</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <form
+          className="modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!name.trim()) return;
+            onSubmit({ name: name.trim(), role });
+          }}
+        >
+          <label>
+            <span>Nome</span>
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Ex.: João Reis"
+              required
+              autoFocus
+            />
+          </label>
+          <label>
+            <span>Papel</span>
+            <select value={role} onChange={(event) => setRole(event.target.value as SellerRole)}>
+              <option value="Vendedor">Vendedor</option>
+              <option value="SDR">SDR</option>
+            </select>
+          </label>
+
+          {errorMessage && <p className="modal-error">{errorMessage}</p>}
+
+          <div className="modal-actions">
+            <div className="modal-actions-right">
+              <button type="button" className="modal-cancel" onClick={onClose}>
+                Cancelar
+              </button>
+              <button type="submit" className="primary-button" disabled={saving}>
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 export function CommercialControl({
   data,
   user,
+  isReadOnly,
 }: {
   data: CommercialData;
   user: User;
+  isReadOnly: boolean;
 }) {
   const [section, setSection] = useState<Section>("visao");
   const [search, setSearch] = useState("");
@@ -254,17 +590,344 @@ export function CommercialControl({
   const [sheetSearch, setSheetSearch] = useState("");
   const [sheetMode, setSheetMode] = useState<"values" | "formulas">("values");
 
+  const [deals, setDeals] = useState<Deal[]>(data.deals2026);
+  const [targets, setTargets] = useState<Target[]>(data.targets);
+  const [sellers, setSellers] = useState<Seller[]>(data.sellers);
+  const [asOf, setAsOf] = useState(data.asOf);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [lastSyncedAt, setLastSyncedAt] = useState(() => Date.now());
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const pendingIdsRef = useRef<Set<string>>(new Set());
+
+  const [pipelineView, setPipelineView] = useState<"kanban" | "tabela">("kanban");
+  const [dragOverStage, setDragOverStage] = useState<Stage | null>(null);
+  const [dealModal, setDealModal] = useState<
+    | { mode: "create"; defaultStage?: Stage; defaultMonthNumber?: number }
+    | { mode: "edit"; deal: Deal }
+    | null
+  >(null);
+  const [modalSaving, setModalSaving] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [sellerModalOpen, setSellerModalOpen] = useState(false);
+  const [sellerModalSaving, setSellerModalSaving] = useState(false);
+  const [sellerModalError, setSellerModalError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ tone: "success" | "error"; message: string } | null>(
+    null,
+  );
+
+  const [visaoScope, setVisaoScope] = useState<"completa" | "vendedor">("completa");
+  const [visaoMonth, setVisaoMonth] = useState<number | "todos">("todos");
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const [dealsRes, activityRes, sellersRes] = await Promise.all([
+          fetch("/api/deals", { cache: "no-store", signal: controller.signal }),
+          fetch("/api/activity?limit=20", { cache: "no-store", signal: controller.signal }),
+          fetch("/api/sellers", { cache: "no-store", signal: controller.signal }),
+        ]);
+        if (!dealsRes.ok) throw new Error("sync failed");
+        const dealsJson = (await dealsRes.json()) as { deals: Deal[]; targets: Target[] };
+        if (cancelled) return;
+
+        setDeals((prev) => {
+          const pending = pendingIdsRef.current;
+          if (pending.size === 0) return dealsJson.deals;
+          const preserved = prev.filter((deal) => pending.has(deal.id));
+          const incoming = dealsJson.deals.filter((deal) => !pending.has(deal.id));
+          return [...incoming, ...preserved];
+        });
+        setTargets(dealsJson.targets);
+        setAsOf(new Date().toISOString());
+        setLastSyncedAt(Date.now());
+        setSyncError(null);
+
+        if (activityRes.ok) {
+          const activityJson = (await activityRes.json()) as { activity: ActivityEntry[] };
+          if (!cancelled) setActivity(activityJson.activity);
+        }
+        if (sellersRes.ok) {
+          const sellersJson = (await sellersRes.json()) as { sellers: Seller[] };
+          if (!cancelled) setSellers(sellersJson.sellers);
+        }
+      } catch (error) {
+        if (!cancelled && (error as Error).name !== "AbortError") {
+          setSyncError("Falha ao sincronizar. Exibindo os últimos dados conhecidos.");
+        }
+      }
+    }
+
+    poll();
+    const interval = setInterval(poll, 9000);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, []);
+
   const owners = useMemo(
     () =>
-      [...new Set(data.deals2026.map((deal) => deal.owner))]
+      [...new Set([...sellers.map((seller) => seller.name), ...deals.map((deal) => deal.owner)])]
         .filter(Boolean)
         .sort((a, b) => a.localeCompare(b, "pt-BR")),
-    [data.deals2026],
+    [deals, sellers],
   );
+  const sellerRoleByName = useMemo(
+    () => new Map(sellers.map((seller) => [seller.name, seller.role])),
+    [sellers],
+  );
+
+  const derived = useMemo(
+    () => deriveMetrics({ deals, targets, asOf, knownOwners: owners }),
+    [deals, targets, asOf, owners],
+  );
+  const { monthlyMetrics, executiveSummary, ownerPerformance, originPerformance, currentMonthNumber } =
+    derived;
+  const currentMonthMetric =
+    monthlyMetrics.find((metric) => metric.monthNumber === currentMonthNumber) ??
+    monthlyMetrics[monthlyMetrics.length - 1];
+
+  const origins = useMemo(
+    () =>
+      [...new Set(deals.map((deal) => deal.origin))]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [deals],
+  );
+
+  function showToast(tone: "success" | "error", message: string) {
+    setToast({ tone, message });
+  }
+
+  async function createDeal(values: DealFormValues) {
+    setModalSaving(true);
+    setModalError(null);
+    const body = {
+      company: values.company.trim(),
+      owner: values.owner.trim(),
+      origin: values.origin.trim(),
+      monthNumber: values.monthNumber,
+      sold: Number(values.sold),
+      adjusted: values.adjusted === "" ? undefined : Number(values.adjusted),
+      billed: values.billed === "" ? 0 : Number(values.billed),
+      stage: values.stage,
+      notes: values.notes.trim() || null,
+      proposalAcceptedAt: values.proposalAcceptedAt || null,
+      contractSignedAt: values.contractSignedAt || null,
+    };
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const optimisticDeal: Deal = {
+      id: tempId,
+      year: 2026,
+      month: MONTH_NAMES[values.monthNumber - 1],
+      monthNumber: values.monthNumber,
+      owner: body.owner,
+      company: body.company,
+      origin: body.origin,
+      sold: body.sold,
+      governedSold: body.sold,
+      adjusted: body.adjusted ?? body.sold,
+      proposalAcceptedAt: body.proposalAcceptedAt,
+      contractSignedAt: body.contractSignedAt,
+      billed: body.billed,
+      variance: body.billed - body.sold,
+      billingStatus: "Sem status",
+      stage: body.stage,
+      notes: body.notes,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: user.email,
+      updatedBy: user.email,
+    };
+    pendingIdsRef.current.add(tempId);
+    setDeals((prev) => [...prev, optimisticDeal]);
+
+    try {
+      const res = await fetch("/api/deals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as { deal?: Deal; error?: string };
+      if (!res.ok || !json.deal) throw new Error(json.error ?? "Erro ao criar negócio");
+      pendingIdsRef.current.delete(tempId);
+      const created = json.deal;
+      setDeals((prev) => prev.map((deal) => (deal.id === tempId ? created : deal)));
+      setModalSaving(false);
+      setDealModal(null);
+      showToast("success", "Negócio criado.");
+    } catch (error) {
+      pendingIdsRef.current.delete(tempId);
+      setDeals((prev) => prev.filter((deal) => deal.id !== tempId));
+      setModalSaving(false);
+      setModalError(error instanceof Error ? error.message : "Erro ao criar negócio");
+    }
+  }
+
+  async function updateDeal(id: string, patch: Record<string, unknown>, options?: { silent?: boolean }) {
+    const previous = deals;
+    pendingIdsRef.current.add(id);
+    setDeals((prev) => prev.map((deal) => (deal.id === id ? { ...deal, ...patch } as Deal : deal)));
+
+    try {
+      const res = await fetch(`/api/deals/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const json = (await res.json()) as { deal?: Deal; error?: string };
+      if (!res.ok || !json.deal) throw new Error(json.error ?? "Erro ao atualizar negócio");
+      pendingIdsRef.current.delete(id);
+      const updated = json.deal;
+      setDeals((prev) => prev.map((deal) => (deal.id === id ? updated : deal)));
+      if (!options?.silent) {
+        setModalSaving(false);
+        setDealModal(null);
+        showToast("success", "Negócio atualizado.");
+      }
+      return true;
+    } catch (error) {
+      pendingIdsRef.current.delete(id);
+      setDeals(previous);
+      if (!options?.silent) {
+        setModalSaving(false);
+        setModalError(error instanceof Error ? error.message : "Erro ao atualizar negócio");
+      } else {
+        showToast("error", error instanceof Error ? error.message : "Erro ao mover negócio");
+      }
+      return false;
+    }
+  }
+
+  async function deleteDeal(id: string) {
+    const previous = deals;
+    pendingIdsRef.current.add(id);
+    setDeals((prev) => prev.filter((deal) => deal.id !== id));
+
+    try {
+      const res = await fetch(`/api/deals/${id}`, { method: "DELETE" });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Erro ao excluir negócio");
+      pendingIdsRef.current.delete(id);
+      setModalSaving(false);
+      setDealModal(null);
+      showToast("success", "Negócio excluído.");
+    } catch (error) {
+      pendingIdsRef.current.delete(id);
+      setDeals(previous);
+      setModalSaving(false);
+      setModalError(error instanceof Error ? error.message : "Erro ao excluir negócio");
+    }
+  }
+
+  function moveDealStage(id: string, stage: Stage) {
+    void updateDeal(id, { stage }, { silent: true });
+  }
+
+  async function updateTarget(monthNumber: number, value: number) {
+    const year = targets.find((t) => t.monthNumber === monthNumber)?.year ?? 2026;
+    const previous = targets;
+    setTargets((prev) => {
+      const exists = prev.some((t) => t.monthNumber === monthNumber);
+      if (exists) {
+        return prev.map((t) => (t.monthNumber === monthNumber ? { ...t, target: value } : t));
+      }
+      return [...prev, { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value }];
+    });
+
+    try {
+      const res = await fetch(`/api/targets/${year}/${monthNumber}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: value }),
+      });
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Erro ao atualizar meta");
+      showToast("success", "Meta atualizada.");
+    } catch (error) {
+      setTargets(previous);
+      showToast("error", error instanceof Error ? error.message : "Erro ao atualizar meta");
+    }
+  }
+
+  async function addSeller(values: { name: string; role: SellerRole }) {
+    setSellerModalSaving(true);
+    setSellerModalError(null);
+    const previous = sellers;
+    const alreadyExists = sellers.some(
+      (seller) => seller.name.toLocaleLowerCase("pt-BR") === values.name.toLocaleLowerCase("pt-BR"),
+    );
+    setSellers((prev) =>
+      alreadyExists
+        ? prev.map((seller) =>
+            seller.name.toLocaleLowerCase("pt-BR") === values.name.toLocaleLowerCase("pt-BR")
+              ? values
+              : seller,
+          )
+        : [...prev, values],
+    );
+
+    try {
+      const res = await fetch("/api/sellers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const json = (await res.json()) as { sellers?: Seller[]; error?: string };
+      if (!res.ok || !json.sellers) throw new Error(json.error ?? "Erro ao adicionar vendedor");
+      setSellers(json.sellers);
+      setSellerModalSaving(false);
+      setSellerModalOpen(false);
+      showToast("success", `${values.name} adicionado à equipe.`);
+    } catch (error) {
+      setSellers(previous);
+      setSellerModalSaving(false);
+      setSellerModalError(error instanceof Error ? error.message : "Erro ao adicionar vendedor");
+    }
+  }
+
+  function handleModalSubmit(values: DealFormValues) {
+    if (!dealModal) return;
+    if (dealModal.mode === "create") {
+      void createDeal(values);
+      return;
+    }
+    setModalSaving(true);
+    setModalError(null);
+    void updateDeal(dealModal.deal.id, {
+      company: values.company.trim(),
+      owner: values.owner.trim(),
+      origin: values.origin.trim(),
+      monthNumber: values.monthNumber,
+      sold: Number(values.sold),
+      adjusted: Number(values.adjusted),
+      billed: Number(values.billed),
+      stage: values.stage,
+      notes: values.notes.trim() || null,
+      proposalAcceptedAt: values.proposalAcceptedAt || null,
+      contractSignedAt: values.contractSignedAt || null,
+    });
+  }
 
   const filteredDeals = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("pt-BR");
-    return data.deals2026.filter((deal) => {
+    return deals.filter((deal) => {
       const matchesQuery =
         !query ||
         deal.company.toLocaleLowerCase("pt-BR").includes(query) ||
@@ -276,79 +939,83 @@ export function CommercialControl({
         ownerFilter === "Todos" || deal.owner === ownerFilter;
       return matchesQuery && matchesMonth && matchesOwner;
     });
-  }, [data.deals2026, monthFilter, ownerFilter, search]);
+  }, [deals, monthFilter, ownerFilter, search]);
+
+  const dealsByStage = useMemo(() => {
+    const grouped: Record<Stage, Deal[]> = { aberto: [], ganho: [], faturado: [], pago: [] };
+    for (const deal of filteredDeals) grouped[deal.stage].push(deal);
+    return grouped;
+  }, [filteredDeals]);
 
   const selectedOwnerDeals = useMemo(
-    () => data.deals2026.filter((deal) => deal.owner === selectedOwner),
-    [data.deals2026, selectedOwner],
+    () => deals.filter((deal) => deal.owner === selectedOwner),
+    [deals, selectedOwner],
   );
 
-  const selectedOwnerDashboard = useMemo(() => {
-    const sold = selectedOwnerDeals.reduce((sum, deal) => sum + deal.sold, 0);
-    const adjusted = selectedOwnerDeals.reduce(
-      (sum, deal) => sum + deal.adjusted,
-      0,
-    );
-    const billed = selectedOwnerDeals.reduce(
-      (sum, deal) => sum + deal.billed,
-      0,
-    );
-    const cycles = selectedOwnerDeals
-      .map((deal) => {
-        if (!deal.proposalAcceptedAt || !deal.contractSignedAt) return null;
-        const start = new Date(`${deal.proposalAcceptedAt}T00:00:00`);
-        const end = new Date(`${deal.contractSignedAt}T00:00:00`);
-        return Math.max(
-          0,
-          Math.round((end.getTime() - start.getTime()) / 86_400_000),
-        );
-      })
-      .filter((days): days is number => days !== null);
-    const origins = selectedOwnerDeals.reduce<Record<string, number>>(
-      (accumulator, deal) => {
-        const origin = deal.origin || "Não informado";
-        accumulator[origin] = (accumulator[origin] ?? 0) + 1;
-        return accumulator;
-      },
-      {},
-    );
-    const topOrigin =
-      Object.entries(origins).sort((a, b) => b[1] - a[1])[0]?.[0] ??
-      "Sem dados";
-    const months = data.monthlyMetrics.map((metric) => {
-      const deals = selectedOwnerDeals.filter(
-        (deal) => deal.monthNumber === metric.monthNumber,
-      );
-      return {
-        month: metric.month,
-        shortMonth: metric.month.slice(0, 3),
-        deals: deals.length,
-        adjusted: deals.reduce((sum, deal) => sum + deal.adjusted, 0),
-      };
-    });
-
-    return {
-      sold,
-      adjusted,
-      billed,
-      ticket: selectedOwnerDeals.length
-        ? adjusted / selectedOwnerDeals.length
-        : 0,
-      realization: sold ? adjusted / sold : 0,
-      averageCycle: cycles.length
-        ? cycles.reduce((sum, days) => sum + days, 0) / cycles.length
-        : 0,
-      waiting: selectedOwnerDeals.filter((deal) =>
-        deal.billingStatus.toLocaleLowerCase("pt-BR").includes("aguardando"),
-      ).length,
-      topOrigin,
-      months,
-    };
-  }, [data.monthlyMetrics, selectedOwnerDeals]);
+  const selectedOwnerDashboard = useMemo(
+    () => buildSellerSummary(selectedOwnerDeals, monthlyMetrics),
+    [selectedOwnerDeals, monthlyMetrics],
+  );
 
   const selectedOwnerMaxMonth = Math.max(
     ...selectedOwnerDashboard.months.map((month) => month.adjusted),
     1,
+  );
+
+  // Visão executiva: "Visão completa" (empresa) vs. "Por vendedor", ambas
+  // podem ser recortadas por um mês específico ou pelo ano inteiro.
+  const visaoMonthLabel =
+    visaoMonth === "todos"
+      ? "Ano completo"
+      : (monthlyMetrics.find((metric) => metric.monthNumber === visaoMonth)?.month ??
+        MONTH_NAMES[visaoMonth - 1]);
+
+  const visaoCompanyDeals = useMemo(
+    () => (visaoMonth === "todos" ? deals : deals.filter((deal) => deal.monthNumber === visaoMonth)),
+    [deals, visaoMonth],
+  );
+
+  const visaoCompanySummary = useMemo(() => {
+    if (visaoMonth === "todos") return executiveSummary;
+    const metric = monthlyMetrics.find((item) => item.monthNumber === visaoMonth);
+    const sold = visaoCompanyDeals.reduce((sum, deal) => sum + deal.sold, 0);
+    const adjusted = visaoCompanyDeals.reduce((sum, deal) => sum + deal.adjusted, 0);
+    const target = metric?.target ?? 0;
+    const cycles = visaoCompanyDeals
+      .map((deal) => {
+        if (!deal.proposalAcceptedAt || !deal.contractSignedAt) return null;
+        const start = new Date(`${deal.proposalAcceptedAt}T00:00:00`);
+        const end = new Date(`${deal.contractSignedAt}T00:00:00`);
+        return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86_400_000));
+      })
+      .filter((days): days is number => days !== null);
+    const pending = visaoCompanyDeals
+      .filter((deal) => deal.stage === "aberto" || deal.stage === "ganho")
+      .reduce((sum, deal) => sum + deal.adjusted, 0);
+
+    return {
+      ytdTarget: target,
+      ytdSold: sold,
+      ytdAdjusted: adjusted,
+      ytdGap: adjusted - target,
+      attainment: target ? adjusted / target : 0,
+      realization: sold ? adjusted / sold : 0,
+      averageSalesCycle: cycles.length
+        ? cycles.reduce((sum, days) => sum + days, 0) / cycles.length
+        : 0,
+      currentMonthForecast: adjusted,
+      currentMonthPending: pending,
+    };
+  }, [visaoMonth, visaoCompanyDeals, monthlyMetrics, executiveSummary]);
+
+  const visaoSellerDeals = useMemo(() => {
+    const base = deals.filter((deal) => deal.owner === selectedOwner);
+    return visaoMonth === "todos" ? base : base.filter((deal) => deal.monthNumber === visaoMonth);
+  }, [deals, selectedOwner, visaoMonth]);
+
+  const visaoSellerSummary = useMemo(
+    () => buildSellerSummary(visaoSellerDeals, monthlyMetrics),
+    [visaoSellerDeals, monthlyMetrics],
   );
 
   const currentSheet =
@@ -372,12 +1039,15 @@ export function CommercialControl({
   }, [currentMatrix, sheetSearch]);
 
   const maxMonthly = Math.max(
-    ...data.monthlyMetrics.flatMap((metric) => [metric.target, metric.adjusted]),
-  );
-  const maxOrigin = Math.max(
-    ...data.originPerformance.map((item) => item.adjusted),
+    ...monthlyMetrics.flatMap((metric) => [metric.target, metric.adjusted]),
     1,
   );
+  const maxOrigin = Math.max(
+    ...originPerformance.map((item) => item.adjusted),
+    1,
+  );
+
+  const secondsSinceSync = Math.max(0, Math.round((now - lastSyncedAt) / 1000));
 
   return (
     <div className="app-shell">
@@ -405,9 +1075,9 @@ export function CommercialControl({
           <span className="proof-label">Base governada</span>
           <strong>{data.meta.workbookSheets} abas importadas</strong>
           <span>{data.meta.importedCells.toLocaleString("pt-BR")} células preservadas</span>
-          <div className="proof-line">
+          <div className={syncError ? "proof-line proof-line-error" : "proof-line"}>
             <i />
-            Sincronização validada
+            {syncError ? "Sincronização com falha" : `Atualizado ${timeAgoLabel(secondsSinceSync)}`}
           </div>
         </div>
 
@@ -426,7 +1096,7 @@ export function CommercialControl({
           <div className="user-area">
             <div className="period-chip">
               <span>Período</span>
-              <strong>Jan — Jul 2026</strong>
+              <strong>Jan — {currentMonthMetric?.month.slice(0, 3) ?? "Dez"} 2026</strong>
             </div>
             <div className="user-chip">
               <span className="user-avatar">{initials(user.displayName)}</span>
@@ -448,6 +1118,13 @@ export function CommercialControl({
           </div>
         </header>
 
+        {isReadOnly && (
+          <div className="readonly-banner">
+            <span>Modo somente leitura — entre para criar, editar e mover negócios.</span>
+            <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>
+          </div>
+        )}
+
         <div className="mobile-nav" aria-label="Navegação móvel">
           {navItems.map((item) => (
             <button
@@ -463,164 +1140,367 @@ export function CommercialControl({
 
         {section === "visao" && (
           <section className="page-content">
-            <div className="executive-hero">
-              <div className="hero-copy">
-                <span className="section-kicker">Receita governada</span>
-                <h2>
-                  O que foi vendido importa.
-                  <br />
-                  <em>O que virou receita decide.</em>
-                </h2>
-                <p>
-                  A operação atingiu {percent.format(data.executiveSummary.attainment)} da
-                  meta acumulada, com uma diferença de{" "}
-                  {currency.format(Math.abs(data.executiveSummary.ytdGap))}. O
-                  painel separa valor comercial, ajuste e faturamento para
-                  sustentar decisões confiáveis.
-                </p>
+            <div className="visao-toolbar">
+              <div className="mode-toggle">
+                <button
+                  type="button"
+                  className={visaoScope === "completa" ? "active" : ""}
+                  onClick={() => setVisaoScope("completa")}
+                >
+                  Visão completa
+                </button>
+                <button
+                  type="button"
+                  className={visaoScope === "vendedor" ? "active" : ""}
+                  onClick={() => setVisaoScope("vendedor")}
+                >
+                  Por vendedor
+                </button>
               </div>
-              <div className="hero-number">
-                <span>Receita ajustada acumulada</span>
-                <strong>{currency.format(data.executiveSummary.ytdAdjusted)}</strong>
-                <div className="hero-progress">
-                  <i
-                    style={{
-                      width: `${Math.min(data.executiveSummary.attainment * 100, 100)}%`,
-                    }}
-                  />
-                </div>
-                <div className="hero-number-meta">
-                  <span>
-                    Meta <b>{currency.format(data.executiveSummary.ytdTarget)}</b>
-                  </span>
-                  <span className="negative">
-                    Gap <b>{currency.format(data.executiveSummary.ytdGap)}</b>
-                  </span>
-                </div>
-              </div>
-              <div className="atlas-angle" aria-hidden="true" />
-            </div>
-
-            <div className="kpi-grid">
-              <article className="kpi-card">
-                <span>Realização da meta</span>
-                <strong>{percent.format(data.executiveSummary.attainment)}</strong>
-                <small>{healthLabel(data.executiveSummary.attainment)}</small>
-              </article>
-              <article className="kpi-card">
-                <span>Conversão em receita</span>
-                <strong>{percent.format(data.executiveSummary.realization)}</strong>
-                <small>ajustado ÷ vendido</small>
-              </article>
-              <article className="kpi-card">
-                <span>Ciclo comercial médio</span>
-                <strong>{data.executiveSummary.averageSalesCycle.toFixed(1).replace(".", ",")}d</strong>
-                <small>proposta até assinatura</small>
-              </article>
-              <article className="kpi-card accent">
-                <span>Forecast de julho</span>
-                <strong>{currency.format(data.executiveSummary.julyForecast)}</strong>
-                <small>
-                  {(
-                    data.executiveSummary.julyForecast /
-                    data.monthlyMetrics[6].target
-                  )
-                    .toFixed(1)
-                    .replace(".", ",")}
-                  x cobertura da meta
-                </small>
-              </article>
-            </div>
-
-            <div className="overview-grid">
-              <article className="panel revenue-panel">
-                <div className="panel-heading">
-                  <div>
-                    <span className="section-kicker">Performance mensal</span>
-                    <h3>Meta vs. receita ajustada</h3>
-                  </div>
-                  <div className="legend">
-                    <span><i className="legend-target" /> Meta</span>
-                    <span><i className="legend-actual" /> Ajustado</span>
-                  </div>
-                </div>
-                <div className="bar-chart">
-                  {data.monthlyMetrics.map((metric) => (
-                    <div className="bar-group" key={metric.month}>
-                      <div className="bar-values">
-                        <span>{currency.format(metric.adjusted)}</span>
-                      </div>
-                      <div className="bar-pair">
-                        <i
-                          className="bar target"
-                          style={{
-                            height: `${Math.max((metric.target / maxMonthly) * 100, 4)}%`,
-                          }}
-                        />
-                        <i
-                          className="bar actual"
-                          style={{
-                            height: `${Math.max((metric.adjusted / maxMonthly) * 100, 4)}%`,
-                          }}
-                        />
-                      </div>
-                      <strong>{metric.month.slice(0, 3)}</strong>
-                      <small className={`health-${metric.health}`}>
-                        {percent.format(metric.attainment)}
-                      </small>
-                    </div>
-                  ))}
-                </div>
-              </article>
-
-              <article className="panel attention-panel">
-                <div className="panel-heading">
-                  <div>
-                    <span className="section-kicker">Sala de decisão</span>
-                    <h3>Pontos que pedem ação</h3>
-                  </div>
-                  <span className="issue-count">
-                    {data.dataQualityIssues.length} alertas
-                  </span>
-                </div>
-                <div className="attention-list">
-                  {data.dataQualityIssues.slice(0, 4).map((issue, index) => (
-                    <button
-                      type="button"
-                      key={`${issue.title}-${index}`}
-                      onClick={() => setSection("governanca")}
+              <div className="visao-toolbar-selects">
+                {visaoScope === "vendedor" && (
+                  <label className="visao-select">
+                    <span>Vendedor</span>
+                    <select
+                      value={selectedOwner}
+                      onChange={(event) => setSelectedOwner(event.target.value)}
                     >
-                      <span className={`severity ${issue.severity}`}>
-                        {String(index + 1).padStart(2, "0")}
-                      </span>
-                      <span>
-                        <strong>{issue.title}</strong>
-                        <small>{issue.owner}</small>
-                      </span>
-                      <b>→</b>
-                    </button>
-                  ))}
-                </div>
-              </article>
+                      {owners.map((owner) => (
+                        <option key={owner} value={owner}>
+                          {owner}
+                          {sellerRoleByName.get(owner) === "SDR" ? " (SDR)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="visao-select">
+                  <span>Período</span>
+                  <select
+                    value={visaoMonth}
+                    onChange={(event) =>
+                      setVisaoMonth(
+                        event.target.value === "todos" ? "todos" : Number(event.target.value),
+                      )
+                    }
+                  >
+                    <option value="todos">Ano completo</option>
+                    {monthlyMetrics.map((metric) => (
+                      <option key={metric.monthNumber} value={metric.monthNumber}>
+                        {metric.month}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
             </div>
 
-            <div className="decision-strip">
-              <div>
-                <span className="section-kicker">Próxima decisão</span>
-                <h3>Julho tem demanda suficiente. O foco é converter com qualidade.</h3>
-              </div>
-              <div className="decision-stat">
-                <span>Pendente de assinatura</span>
-                <strong>{currency.format(data.executiveSummary.julyPending)}</strong>
-              </div>
-              <div className="decision-stat">
-                <span>Forecast total</span>
-                <strong>{currency.format(data.executiveSummary.julyForecast)}</strong>
-              </div>
-              <button type="button" onClick={() => setSection("pipeline")}>
-                Abrir negócios <b>→</b>
-              </button>
-            </div>
+            {visaoScope === "completa" ? (
+              <>
+                <div className="executive-hero">
+                  <div className="hero-copy">
+                    <span className="section-kicker">Receita governada</span>
+                    <h2>
+                      O que foi vendido importa.
+                      <br />
+                      <em>O que virou receita decide.</em>
+                    </h2>
+                    <p>
+                      A operação atingiu {percent.format(visaoCompanySummary.attainment)} da meta{" "}
+                      {visaoMonth === "todos" ? "acumulada" : `de ${visaoMonthLabel}`}, com uma
+                      diferença de {currency.format(Math.abs(visaoCompanySummary.ytdGap))}. O
+                      painel separa valor comercial, ajuste e faturamento para sustentar decisões
+                      confiáveis.
+                    </p>
+                  </div>
+                  <div className="hero-number">
+                    <span>
+                      Receita ajustada {visaoMonth === "todos" ? "acumulada" : `de ${visaoMonthLabel}`}
+                    </span>
+                    <strong>{currency.format(visaoCompanySummary.ytdAdjusted)}</strong>
+                    <div className="hero-progress">
+                      <i
+                        style={{
+                          width: `${Math.min(visaoCompanySummary.attainment * 100, 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="hero-number-meta">
+                      <span>
+                        Meta <b>{currency.format(visaoCompanySummary.ytdTarget)}</b>
+                      </span>
+                      <span className="negative">
+                        Gap <b>{currency.format(visaoCompanySummary.ytdGap)}</b>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="atlas-angle" aria-hidden="true" />
+                </div>
+
+                <div className="kpi-grid">
+                  <article className="kpi-card">
+                    <span>Realização da meta</span>
+                    <strong>{percent.format(visaoCompanySummary.attainment)}</strong>
+                    <small>{healthLabel(visaoCompanySummary.attainment)}</small>
+                  </article>
+                  <article className="kpi-card">
+                    <span>Conversão em receita</span>
+                    <strong>{percent.format(visaoCompanySummary.realization)}</strong>
+                    <small>ajustado ÷ vendido</small>
+                  </article>
+                  <article className="kpi-card">
+                    <span>Ciclo comercial médio</span>
+                    <strong>
+                      {visaoCompanySummary.averageSalesCycle.toFixed(1).replace(".", ",")}d
+                    </strong>
+                    <small>proposta até assinatura</small>
+                  </article>
+                  <article className="kpi-card accent">
+                    <span>
+                      {visaoMonth === "todos"
+                        ? `Forecast de ${currentMonthMetric?.month ?? "mês atual"}`
+                        : `Receita de ${visaoMonthLabel}`}
+                    </span>
+                    <strong>{currency.format(visaoCompanySummary.currentMonthForecast)}</strong>
+                    <small>
+                      {visaoCompanySummary.ytdTarget
+                        ? `${(visaoCompanySummary.currentMonthForecast / visaoCompanySummary.ytdTarget)
+                            .toFixed(1)
+                            .replace(".", ",")}x cobertura da meta`
+                        : "sem meta definida"}
+                    </small>
+                  </article>
+                </div>
+
+                <div className="overview-grid">
+                  <article className="panel revenue-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="section-kicker">Performance mensal</span>
+                        <h3>Meta vs. receita ajustada</h3>
+                      </div>
+                      <div className="legend">
+                        <span><i className="legend-target" /> Meta</span>
+                        <span><i className="legend-actual" /> Ajustado</span>
+                      </div>
+                    </div>
+                    <div className="bar-chart">
+                      {monthlyMetrics.map((metric) => (
+                        <div
+                          className={
+                            visaoMonth === metric.monthNumber ? "bar-group bar-group-selected" : "bar-group"
+                          }
+                          key={metric.month}
+                        >
+                          <div className="bar-values">
+                            <span>{currency.format(metric.adjusted)}</span>
+                          </div>
+                          <div
+                            className="bar-pair"
+                            role="button"
+                            tabIndex={0}
+                            title={`Ver ${metric.month} na visão completa`}
+                            onClick={() => setVisaoMonth(metric.monthNumber)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") setVisaoMonth(metric.monthNumber);
+                            }}
+                          >
+                            <i
+                              className="bar target"
+                              style={{
+                                height: `${Math.max((metric.target / maxMonthly) * 100, 4)}%`,
+                              }}
+                            />
+                            <i
+                              className="bar actual"
+                              style={{
+                                height: `${Math.max((metric.adjusted / maxMonthly) * 100, 4)}%`,
+                              }}
+                            />
+                          </div>
+                          <TargetEditable
+                            label={metric.month.slice(0, 3)}
+                            target={metric.target}
+                            disabled={isReadOnly}
+                            onSave={(value) => void updateTarget(metric.monthNumber, value)}
+                          />
+                          <small className={`health-${metric.health}`}>
+                            {percent.format(metric.attainment)}
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+
+                  <article className="panel attention-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="section-kicker">Sala de decisão</span>
+                        <h3>Pontos que pedem ação</h3>
+                      </div>
+                      <span className="issue-count">
+                        {data.dataQualityIssues.length} alertas
+                      </span>
+                    </div>
+                    <div className="attention-list">
+                      {data.dataQualityIssues.slice(0, 4).map((issue, index) => (
+                        <button
+                          type="button"
+                          key={`${issue.title}-${index}`}
+                          onClick={() => setSection("governanca")}
+                        >
+                          <span className={`severity ${issue.severity}`}>
+                            {String(index + 1).padStart(2, "0")}
+                          </span>
+                          <span>
+                            <strong>{issue.title}</strong>
+                            <small>{issue.owner}</small>
+                          </span>
+                          <b>→</b>
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                </div>
+
+                <div className="decision-strip">
+                  <div>
+                    <span className="section-kicker">Próxima decisão</span>
+                    <h3>
+                      {visaoMonth === "todos"
+                        ? (currentMonthMetric?.month ?? "O mês atual")
+                        : visaoMonthLabel}{" "}
+                      tem demanda suficiente. O foco é converter com qualidade.
+                    </h3>
+                  </div>
+                  <div className="decision-stat">
+                    <span>Pendente de faturamento</span>
+                    <strong>{currency.format(visaoCompanySummary.currentMonthPending)}</strong>
+                  </div>
+                  <div className="decision-stat">
+                    <span>Forecast total</span>
+                    <strong>{currency.format(visaoCompanySummary.currentMonthForecast)}</strong>
+                  </div>
+                  <button type="button" onClick={() => setSection("pipeline")}>
+                    Abrir negócios <b>→</b>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <article className="seller-hero">
+                  <div className="seller-identity">
+                    <span>{initials(selectedOwner)}</span>
+                    <div>
+                      <small>
+                        Dashboard individual
+                        {sellerRoleByName.get(selectedOwner)
+                          ? ` · ${sellerRoleByName.get(selectedOwner)}`
+                          : ""}
+                      </small>
+                      <h3>{selectedOwner}</h3>
+                      <p>
+                        {visaoSellerDeals.length} negócios em{" "}
+                        {visaoMonth === "todos" ? "2026" : visaoMonthLabel}.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="seller-share">
+                    <span>Participação na receita ajustada</span>
+                    <strong>
+                      {percent.format(
+                        visaoSellerSummary.adjusted / Math.max(visaoCompanyDeals.reduce((s, d) => s + d.adjusted, 0), 1),
+                      )}
+                    </strong>
+                    <i>
+                      <b
+                        style={{
+                          width: `${Math.min(
+                            (visaoSellerSummary.adjusted /
+                              Math.max(visaoCompanyDeals.reduce((s, d) => s + d.adjusted, 0), 1)) *
+                              100,
+                            100,
+                          )}%`,
+                        }}
+                      />
+                    </i>
+                  </div>
+                </article>
+
+                <div className="seller-kpi-grid">
+                  <article>
+                    <span>Receita ajustada</span>
+                    <strong>{currency.format(visaoSellerSummary.adjusted)}</strong>
+                    <small>Valor governado da carteira</small>
+                  </article>
+                  <article>
+                    <span>Valor vendido</span>
+                    <strong>{currency.format(visaoSellerSummary.sold)}</strong>
+                    <small>{percent.format(visaoSellerSummary.realization)} realizado</small>
+                  </article>
+                  <article>
+                    <span>Ticket médio</span>
+                    <strong>{currency.format(visaoSellerSummary.ticket)}</strong>
+                    <small>{visaoSellerDeals.length} contratos</small>
+                  </article>
+                  <article>
+                    <span>Ciclo médio</span>
+                    <strong>
+                      {visaoSellerSummary.averageCycle.toFixed(1).replace(".", ",")} dias
+                    </strong>
+                    <small>Da proposta à assinatura</small>
+                  </article>
+                  <article>
+                    <span>Faturado</span>
+                    <strong>{currency.format(visaoSellerSummary.billed)}</strong>
+                    <small>{visaoSellerSummary.waiting} aguardando faturamento</small>
+                  </article>
+                  <article>
+                    <span>Principal origem</span>
+                    <strong className="text-value">{visaoSellerSummary.topOrigin}</strong>
+                    <small>Canal mais frequente</small>
+                  </article>
+                </div>
+
+                {visaoMonth === "todos" && (
+                  <article className="panel seller-month-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="section-kicker">Evolução mensal</span>
+                        <h3>Receita ajustada de {selectedOwner}</h3>
+                      </div>
+                    </div>
+                    <div className="seller-month-chart">
+                      {visaoSellerSummary.months.map((month) => (
+                        <div key={month.month}>
+                          <span>{currency.format(month.adjusted)}</span>
+                          <i>
+                            <b
+                              style={{
+                                height: `${Math.max(
+                                  (month.adjusted /
+                                    Math.max(...visaoSellerSummary.months.map((m) => m.adjusted), 1)) *
+                                    100,
+                                  month.adjusted ? 5 : 0,
+                                )}%`,
+                              }}
+                            />
+                          </i>
+                          <strong>{month.shortMonth}</strong>
+                          <small>{month.deals} negócios</small>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                )}
+
+                <div className="visao-vendedor-footer">
+                  <button type="button" className="primary-button" onClick={() => setSection("equipe")}>
+                    Ver dashboard completo do vendedor <b>→</b>
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         )}
 
@@ -629,19 +1509,46 @@ export function CommercialControl({
             <div className="page-intro">
               <div>
                 <span className="section-kicker">Carteira comercial</span>
-                <h2>Negócios com contexto, valor e responsável.</h2>
+                <h2>Negócios com contexto, valor, etapa e responsável.</h2>
                 <p>
-                  {data.meta.records2026} registros de 2026 foram estruturados a
-                  partir das abas mensais, sem apagar as versões consolidadas.
+                  {deals.length} registros de 2026, organizados pelo funil financeiro
+                  Aberto → Ganho → Faturado → Pago.
                 </p>
               </div>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => downloadCsv(filteredDeals)}
-              >
-                Exportar seleção
-              </button>
+              <div className="pipeline-actions">
+                <div className="mode-toggle">
+                  <button
+                    type="button"
+                    className={pipelineView === "kanban" ? "active" : ""}
+                    onClick={() => setPipelineView("kanban")}
+                  >
+                    Kanban
+                  </button>
+                  <button
+                    type="button"
+                    className={pipelineView === "tabela" ? "active" : ""}
+                    onClick={() => setPipelineView("tabela")}
+                  >
+                    Tabela
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => downloadCsv(filteredDeals, "atlas-negocios-2026.csv")}
+                >
+                  Exportar seleção
+                </button>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    className="primary-button accent-button"
+                    onClick={() => setDealModal({ mode: "create" })}
+                  >
+                    + Novo negócio
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="filter-bar">
@@ -660,7 +1567,7 @@ export function CommercialControl({
                   onChange={(event) => setMonthFilter(event.target.value)}
                 >
                   <option>Todos</option>
-                  {data.monthlyMetrics.map((metric) => (
+                  {monthlyMetrics.map((metric) => (
                     <option key={metric.month}>{metric.month}</option>
                   ))}
                 </select>
@@ -683,60 +1590,118 @@ export function CommercialControl({
               </div>
             </div>
 
-            <article className="panel table-panel">
-              <div className="data-table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Empresa</th>
-                      <th>Mês</th>
-                      <th>Responsável</th>
-                      <th>Origem</th>
-                      <th>Vendido</th>
-                      <th>Ajustado</th>
-                      <th>Faturamento</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredDeals.map((deal) => (
-                      <tr key={deal.id}>
-                        <td>
+            {pipelineView === "kanban" ? (
+              <div className="kanban-board">
+                {STAGES.map((stage) => (
+                  <div
+                    key={stage}
+                    className={
+                      dragOverStage === stage ? "kanban-column drag-over" : "kanban-column"
+                    }
+                    onDragOver={(event) => {
+                      if (isReadOnly) return;
+                      event.preventDefault();
+                      setDragOverStage(stage);
+                    }}
+                    onDragLeave={() => setDragOverStage((current) => (current === stage ? null : current))}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setDragOverStage(null);
+                      if (isReadOnly) return;
+                      const id = event.dataTransfer.getData("text/plain");
+                      if (id) moveDealStage(id, stage);
+                    }}
+                  >
+                    <div className="kanban-column-heading">
+                      <span>{STAGE_LABELS[stage]}</span>
+                      <b>{dealsByStage[stage].length}</b>
+                    </div>
+                    <div className="kanban-column-total">
+                      {currency.format(
+                        dealsByStage[stage].reduce((sum, deal) => sum + deal.adjusted, 0),
+                      )}
+                    </div>
+                    <div className="kanban-cards">
+                      {dealsByStage[stage].length === 0 && (
+                        <div className="kanban-empty">Nenhum negócio nesta etapa.</div>
+                      )}
+                      {dealsByStage[stage].map((deal) => (
+                        <div
+                          key={deal.id}
+                          className="kanban-card"
+                          draggable={!isReadOnly}
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData("text/plain", deal.id);
+                          }}
+                          onClick={isReadOnly ? undefined : () => setDealModal({ mode: "edit", deal })}
+                        >
                           <strong>{deal.company}</strong>
-                          <small>{deal.id}</small>
-                        </td>
-                        <td>{deal.month}</td>
-                        <td>
                           <span className="owner-cell">
                             <i>{initials(deal.owner)}</i>
                             {deal.owner}
                           </span>
-                        </td>
-                        <td>{deal.origin}</td>
-                        <td>{preciseCurrency.format(deal.sold)}</td>
-                        <td className="emphasis">
-                          {preciseCurrency.format(deal.adjusted)}
-                        </td>
-                        <td>{preciseCurrency.format(deal.billed)}</td>
-                        <td>
-                          <span
-                            className={`status-pill ${
-                              deal.billingStatus.includes("Aguardando")
-                                ? "waiting"
-                                : deal.variance < 0
-                                  ? "negative"
-                                  : "positive"
-                            }`}
-                          >
-                            {deal.billingStatus}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          <div className="kanban-card-footer">
+                            <small>{deal.month}</small>
+                            <b>{preciseCurrency.format(deal.adjusted)}</b>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </article>
+            ) : (
+              <article className="panel table-panel">
+                <div className="data-table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Empresa</th>
+                        <th>Mês</th>
+                        <th>Responsável</th>
+                        <th>Origem</th>
+                        <th>Etapa</th>
+                        <th>Vendido</th>
+                        <th>Ajustado</th>
+                        <th>Faturamento</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredDeals.map((deal) => (
+                        <tr
+                          key={deal.id}
+                          className={isReadOnly ? "" : "clickable-row"}
+                          onClick={isReadOnly ? undefined : () => setDealModal({ mode: "edit", deal })}
+                        >
+                          <td>
+                            <strong>{deal.company}</strong>
+                            <small>{deal.id.slice(0, 8)}</small>
+                          </td>
+                          <td>{deal.month}</td>
+                          <td>
+                            <span className="owner-cell">
+                              <i>{initials(deal.owner)}</i>
+                              {deal.owner}
+                            </span>
+                          </td>
+                          <td>{deal.origin}</td>
+                          <td>
+                            <span className={`status-pill ${STAGE_PILL_CLASS[deal.stage]}`}>
+                              {STAGE_LABELS[deal.stage]}
+                            </span>
+                          </td>
+                          <td>{preciseCurrency.format(deal.sold)}</td>
+                          <td className="emphasis">
+                            {preciseCurrency.format(deal.adjusted)}
+                          </td>
+                          <td>{preciseCurrency.format(deal.billed)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            )}
           </section>
         )}
 
@@ -837,17 +1802,30 @@ export function CommercialControl({
                   evolução mensal e todos os negócios da carteira.
                 </p>
               </div>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() => downloadCsv(selectedOwnerDeals)}
-              >
-                Exportar {selectedOwner}
-              </button>
+              <div className="pipeline-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() =>
+                    downloadCsv(selectedOwnerDeals, `atlas-${selectedOwner}-2026.csv`)
+                  }
+                >
+                  Exportar {selectedOwner}
+                </button>
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    className="primary-button accent-button"
+                    onClick={() => setSellerModalOpen(true)}
+                  >
+                    + Adicionar vendedor
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="seller-selector" aria-label="Selecionar vendedor">
-              {data.ownerPerformance.map((person, index) => (
+              {ownerPerformance.map((person, index) => (
                 <button
                   type="button"
                   key={person.owner}
@@ -857,7 +1835,12 @@ export function CommercialControl({
                 >
                   <span>{initials(person.owner)}</span>
                   <span>
-                    <strong>{person.owner}</strong>
+                    <strong>
+                      {person.owner}
+                      {sellerRoleByName.get(person.owner) === "SDR" ? (
+                        <em className="role-badge">SDR</em>
+                      ) : null}
+                    </strong>
                     <small>
                       {person.deals} negócios · {currency.format(person.adjusted)}
                     </small>
@@ -871,10 +1854,15 @@ export function CommercialControl({
               <div className="seller-identity">
                 <span>{initials(selectedOwner)}</span>
                 <div>
-                  <small>Dashboard individual</small>
+                  <small>
+                    Dashboard individual
+                    {sellerRoleByName.get(selectedOwner)
+                      ? ` · ${sellerRoleByName.get(selectedOwner)}`
+                      : ""}
+                  </small>
                   <h3>{selectedOwner}</h3>
                   <p>
-                    {selectedOwnerDeals.length} negócios entre janeiro e julho
+                    {selectedOwnerDeals.length} negócios entre janeiro e dezembro
                     de 2026.
                   </p>
                 </div>
@@ -884,7 +1872,7 @@ export function CommercialControl({
                 <strong>
                   {percent.format(
                     selectedOwnerDashboard.adjusted /
-                      Math.max(data.executiveSummary.ytdAdjusted, 1),
+                      Math.max(executiveSummary.ytdAdjusted, 1),
                   )}
                 </strong>
                 <i>
@@ -892,7 +1880,7 @@ export function CommercialControl({
                     style={{
                       width: `${Math.min(
                         (selectedOwnerDashboard.adjusted /
-                          Math.max(data.executiveSummary.ytdAdjusted, 1)) *
+                          Math.max(executiveSummary.ytdAdjusted, 1)) *
                           100,
                         100,
                       )}%`,
@@ -1016,39 +2004,35 @@ export function CommercialControl({
                       <th>Empresa</th>
                       <th>Mês</th>
                       <th>Origem</th>
+                      <th>Etapa</th>
                       <th>Vendido</th>
                       <th>Ajustado</th>
                       <th>Faturamento</th>
-                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {selectedOwnerDeals.map((deal) => (
-                      <tr key={deal.id}>
+                      <tr
+                        key={deal.id}
+                        className={isReadOnly ? "" : "clickable-row"}
+                        onClick={isReadOnly ? undefined : () => setDealModal({ mode: "edit", deal })}
+                      >
                         <td>
                           <strong>{deal.company}</strong>
-                          <small>{deal.id}</small>
+                          <small>{deal.id.slice(0, 8)}</small>
                         </td>
                         <td>{deal.month}</td>
                         <td>{deal.origin}</td>
+                        <td>
+                          <span className={`status-pill ${STAGE_PILL_CLASS[deal.stage]}`}>
+                            {STAGE_LABELS[deal.stage]}
+                          </span>
+                        </td>
                         <td>{preciseCurrency.format(deal.sold)}</td>
                         <td className="emphasis">
                           {preciseCurrency.format(deal.adjusted)}
                         </td>
                         <td>{preciseCurrency.format(deal.billed)}</td>
-                        <td>
-                          <span
-                            className={`status-pill ${
-                              deal.billingStatus.includes("Aguardando")
-                                ? "waiting"
-                                : deal.variance < 0
-                                  ? "negative"
-                                  : "positive"
-                            }`}
-                          >
-                            {deal.billingStatus}
-                          </span>
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1065,7 +2049,7 @@ export function CommercialControl({
                   </div>
                 </div>
                 <div className="ranking-list">
-                  {data.ownerPerformance.map((person, index) => (
+                  {ownerPerformance.map((person, index) => (
                     <div key={person.owner}>
                       <span className="rank-number">
                         {String(index + 1).padStart(2, "0")}
@@ -1082,7 +2066,7 @@ export function CommercialControl({
                         <small>
                           {percent.format(
                             person.adjusted /
-                              data.executiveSummary.ytdAdjusted,
+                              Math.max(executiveSummary.ytdAdjusted, 1),
                           )}{" "}
                           do total
                         </small>
@@ -1100,7 +2084,7 @@ export function CommercialControl({
                   </div>
                 </div>
                 <div className="channel-list">
-                  {data.originPerformance.map((origin, index) => (
+                  {originPerformance.map((origin, index) => (
                     <div key={origin.origin}>
                       <span className="channel-index">
                         {String(index + 1).padStart(2, "0")}
@@ -1212,6 +2196,42 @@ export function CommercialControl({
                 </ol>
               </article>
             </div>
+
+            <article className="panel activity-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Trilha de auditoria</span>
+                  <h3>Atividade recente</h3>
+                </div>
+                <span>{activity.length} eventos</span>
+              </div>
+              <div className="activity-list">
+                {activity.length === 0 && (
+                  <p className="activity-empty">Nenhuma alteração registrada ainda.</p>
+                )}
+                {activity.map((entry) => {
+                  const detail = (() => {
+                    try {
+                      return JSON.parse(entry.detailJson) as Record<string, unknown>;
+                    } catch {
+                      return {};
+                    }
+                  })();
+                  const company = typeof detail.company === "string" ? detail.company : null;
+                  return (
+                    <div key={entry.id} className="activity-item">
+                      <span className="activity-avatar">{initials(entry.actorEmail)}</span>
+                      <span className="activity-copy">
+                        <strong>{entry.actorEmail}</strong>{" "}
+                        {ACTION_LABELS[entry.action] ?? entry.action}
+                        {company ? ` — ${company}` : ""}
+                      </span>
+                      <small>{relativeTimestamp(entry.createdAt)}</small>
+                    </div>
+                  );
+                })}
+              </div>
+            </article>
 
             <article className="panel access-panel">
               <div className="panel-heading">
@@ -1397,6 +2417,47 @@ export function CommercialControl({
           <span>Segurança · Governança · Previsibilidade</span>
         </footer>
       </main>
+
+      {dealModal && (
+        <DealModal
+          mode={dealModal.mode}
+          initialValues={
+            dealModal.mode === "create"
+              ? emptyForm({ monthNumber: dealModal.defaultMonthNumber, stage: dealModal.defaultStage })
+              : formFromDeal(dealModal.deal)
+          }
+          owners={owners}
+          origins={origins}
+          saving={modalSaving}
+          errorMessage={modalError}
+          onClose={() => {
+            setDealModal(null);
+            setModalError(null);
+          }}
+          onSubmit={handleModalSubmit}
+          onDelete={
+            dealModal.mode === "edit" ? () => void deleteDeal(dealModal.deal.id) : undefined
+          }
+        />
+      )}
+
+      {sellerModalOpen && (
+        <SellerModal
+          saving={sellerModalSaving}
+          errorMessage={sellerModalError}
+          onClose={() => {
+            setSellerModalOpen(false);
+            setSellerModalError(null);
+          }}
+          onSubmit={(values) => void addSeller(values)}
+        />
+      )}
+
+      {toast && (
+        <div className={`app-toast ${toast.tone}`} role="status">
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }
