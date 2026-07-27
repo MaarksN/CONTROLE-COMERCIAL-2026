@@ -728,6 +728,113 @@ function ActionItemModal({
   );
 }
 
+function MonthlyRecordModal({
+  monthNumber,
+  target,
+  saving,
+  errorMessage,
+  onClose,
+  onSubmit,
+}: {
+  monthNumber: number;
+  target: Target;
+  saving: boolean;
+  errorMessage: string | null;
+  onClose: () => void;
+  onSubmit: (values: { target: number; sold: number; adjusted: number }) => void;
+}) {
+  const [values, setValues] = useState({
+    target: String(target.target),
+    sold: String(target.sold),
+    adjusted: String(target.adjusted),
+  });
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-small" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <h3>Editar {MONTH_NAMES[monthNumber - 1]}</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <form
+          className="modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const target = Number(values.target);
+            const sold = Number(values.sold);
+            const adjusted = Number(values.adjusted);
+            if (
+              !Number.isFinite(target) ||
+              target < 0 ||
+              !Number.isFinite(sold) ||
+              sold < 0 ||
+              !Number.isFinite(adjusted) ||
+              adjusted < 0
+            ) {
+              return;
+            }
+            onSubmit({ target, sold, adjusted });
+          }}
+        >
+          <label>
+            <span>Meta (R$)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={values.target}
+              onChange={(event) => setValues({ ...values, target: event.target.value })}
+              required
+              autoFocus
+            />
+          </label>
+          <label>
+            <span>Vendido consolidado (R$)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={values.sold}
+              onChange={(event) => setValues({ ...values, sold: event.target.value })}
+              required
+            />
+          </label>
+          <label>
+            <span>Ajustado consolidado (R$)</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={values.adjusted}
+              onChange={(event) => setValues({ ...values, adjusted: event.target.value })}
+              required
+            />
+          </label>
+          <p className="modal-hint">
+            Estes valores são o registro consolidado oficial do mês — o mesmo que aparece na
+            planilha de controle. Não são recalculados a partir dos negócios individuais.
+          </p>
+
+          {errorMessage && <p className="modal-error">{errorMessage}</p>}
+
+          <div className="modal-actions">
+            <div className="modal-actions-right">
+              <button type="button" className="modal-cancel" onClick={onClose}>
+                Cancelar
+              </button>
+              <button type="submit" className="primary-button" disabled={saving}>
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function CommercialControl({
   data,
   user,
@@ -780,6 +887,12 @@ export function CommercialControl({
   >(null);
   const [actionItemModalSaving, setActionItemModalSaving] = useState(false);
   const [actionItemModalError, setActionItemModalError] = useState<string | null>(null);
+
+  const [monthlyRecordModal, setMonthlyRecordModal] = useState<{ monthNumber: number } | null>(
+    null,
+  );
+  const [monthlyRecordModalSaving, setMonthlyRecordModalSaving] = useState(false);
+  const [monthlyRecordModalError, setMonthlyRecordModalError] = useState<string | null>(null);
 
   const [visaoScope, setVisaoScope] = useState<"completa" | "vendedor">("completa");
   const [visaoMonth, setVisaoMonth] = useState<number | "todos">("todos");
@@ -1028,17 +1141,28 @@ export function CommercialControl({
     void updateDeal(id, { stage }, { silent: true });
   }
 
-  async function updateTarget(monthNumber: number, value: number) {
+  async function updateMonthlyRecord(
+    monthNumber: number,
+    patch: Partial<{ target: number; sold: number; adjusted: number }>,
+    options?: { silent?: boolean; successMessage?: string },
+  ) {
     const year = targets.find((t) => t.monthNumber === monthNumber)?.year ?? 2026;
     const previous = targets;
     setTargets((prev) => {
       const exists = prev.some((t) => t.monthNumber === monthNumber);
       if (exists) {
-        return prev.map((t) => (t.monthNumber === monthNumber ? { ...t, target: value } : t));
+        return prev.map((t) => (t.monthNumber === monthNumber ? { ...t, ...patch } : t));
       }
       return [
         ...prev,
-        { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value, sold: 0, adjusted: 0 },
+        {
+          year,
+          monthNumber,
+          month: MONTH_NAMES[monthNumber - 1],
+          target: patch.target ?? 0,
+          sold: patch.sold ?? 0,
+          adjusted: patch.adjusted ?? 0,
+        },
       ];
     });
 
@@ -1046,15 +1170,46 @@ export function CommercialControl({
       const res = await fetch(`/api/targets/${year}/${monthNumber}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: value }),
+        body: JSON.stringify(patch),
       });
-      const json = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(json.error ?? "Erro ao atualizar meta");
-      showToast("success", "Meta atualizada.");
+      const json = (await res.json()) as { target?: Target; error?: string };
+      if (!res.ok || !json.target) throw new Error(json.error ?? "Erro ao atualizar mês");
+      const updated = json.target;
+      setTargets((prev) => prev.map((t) => (t.monthNumber === monthNumber ? updated : t)));
+      if (!options?.silent) {
+        setMonthlyRecordModalSaving(false);
+        setMonthlyRecordModal(null);
+      }
+      showToast("success", options?.successMessage ?? "Mês atualizado.");
+      return true;
     } catch (error) {
       setTargets(previous);
-      showToast("error", error instanceof Error ? error.message : "Erro ao atualizar meta");
+      const message = error instanceof Error ? error.message : "Erro ao atualizar mês";
+      if (!options?.silent) {
+        setMonthlyRecordModalSaving(false);
+        setMonthlyRecordModalError(message);
+      } else {
+        showToast("error", message);
+      }
+      return false;
     }
+  }
+
+  function updateTarget(monthNumber: number, value: number) {
+    void updateMonthlyRecord(
+      monthNumber,
+      { target: value },
+      { silent: true, successMessage: "Meta atualizada." },
+    );
+  }
+
+  function handleMonthlyRecordSubmit(values: { target: number; sold: number; adjusted: number }) {
+    if (!monthlyRecordModal) return;
+    setMonthlyRecordModalSaving(true);
+    setMonthlyRecordModalError(null);
+    void updateMonthlyRecord(monthlyRecordModal.monthNumber, values, {
+      successMessage: "Mês atualizado.",
+    });
   }
 
   async function addSeller(values: { name: string; role: SellerRole }) {
@@ -1568,6 +1723,7 @@ export function CommercialControl({
                       <th>Situação</th>
                       <th>Vendido 2025</th>
                       <th>Δ vs. 2025</th>
+                      {!isReadOnly && <th>Ações</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1594,6 +1750,17 @@ export function CommercialControl({
                             </span>
                           )}
                         </td>
+                        {!isReadOnly && (
+                          <td>
+                            <button
+                              type="button"
+                              className="table-edit-button"
+                              onClick={() => setMonthlyRecordModal({ monthNumber: row.monthNumber })}
+                            >
+                              Editar
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -3171,6 +3338,31 @@ export function CommercialControl({
           }
         />
       )}
+
+      {monthlyRecordModal &&
+        (() => {
+          const target = targets.find((t) => t.monthNumber === monthlyRecordModal.monthNumber) ?? {
+            year: 2026,
+            monthNumber: monthlyRecordModal.monthNumber,
+            month: MONTH_NAMES[monthlyRecordModal.monthNumber - 1],
+            target: 0,
+            sold: 0,
+            adjusted: 0,
+          };
+          return (
+            <MonthlyRecordModal
+              monthNumber={monthlyRecordModal.monthNumber}
+              target={target}
+              saving={monthlyRecordModalSaving}
+              errorMessage={monthlyRecordModalError}
+              onClose={() => {
+                setMonthlyRecordModal(null);
+                setMonthlyRecordModalError(null);
+              }}
+              onSubmit={handleMonthlyRecordSubmit}
+            />
+          );
+        })()}
 
       {toast && (
         <div className={`app-toast ${toast.tone}`} role="status">

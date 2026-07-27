@@ -3384,3 +3384,29 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+.table-edit-button {
+  padding: 6px 12px;
+  border: 1px solid var(--atlas-line);
+  background: var(--atlas-white);
+  color: var(--atlas-graphite);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.table-edit-button:hover {
+  border-color: var(--atlas-orange);
+  color: var(--atlas-orange);
+}
+
+.modal-hint {
+  margin: 0;
+  padding: 12px 14px;
+  background: #f7f5f1;
+  color: var(--atlas-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
