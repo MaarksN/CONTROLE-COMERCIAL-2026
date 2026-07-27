@@ -48,11 +48,22 @@ export type Deal = {
   updatedBy: string | null;
 };
 
+/**
+ * Monthly consolidated record — the official target/sold/adjusted rollup
+ * the business already reconciles by hand in the source spreadsheet. It is
+ * intentionally NOT derived by summing `deals2026`: the detail-level deal
+ * rows and this consolidated row are known to diverge for some months
+ * (flagged in `dataQualityIssues` as "detalhe e consolidado divergem"), so
+ * recomputing sold/adjusted from deals would silently reintroduce that gap
+ * instead of reflecting the number the business actually reports on.
+ */
 export type Target = {
   year: number;
   monthNumber: number;
   month: string;
   target: number;
+  sold: number;
+  adjusted: number;
 };
 
 export type MonthlyMetric = {
@@ -156,9 +167,8 @@ export function deriveMetrics({
     const targetRow = targetByMonth.get(monthNumber);
     const target = targetRow?.target ?? 0;
     const monthName = targetRow?.month ?? MONTH_NAMES[monthNumber - 1];
-    const monthDeals = deals.filter((deal) => deal.monthNumber === monthNumber);
-    const sold = monthDeals.reduce((sum, deal) => sum + deal.sold, 0);
-    const adjusted = monthDeals.reduce((sum, deal) => sum + deal.adjusted, 0);
+    const sold = targetRow?.sold ?? 0;
+    const adjusted = targetRow?.adjusted ?? 0;
     const gap = adjusted - target;
     const attainment = target ? adjusted / target : 0;
     const adjustmentRate = sold ? (adjusted - sold) / sold : 0;

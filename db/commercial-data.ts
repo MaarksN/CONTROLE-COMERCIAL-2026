@@ -22,7 +22,53 @@ const SEED_VERSION = "atlas-commercial-2026-v1";
 const STAGE_BACKFILL_KEY = "stage_backfill_v1";
 const SELLER_ROSTER_KEY = "team_roster";
 const ACTION_ITEMS_SEED_KEY = "action_items_seed_v1";
+const EXTRA_MONTHS_BACKFILL_KEY = "extra_month_targets_v1";
+const ADMIN_SEED_KEY = "admin_role_seed_v1";
 const BATCH_SIZE = 40;
+
+// Matches governance.roles from the audited workbook: only these role names
+// carry write access. Unknown/unassigned users fall back to the schema's own
+// default role ("Diretoria (leitura)"), which is read-only by design.
+const EDITABLE_ROLES = new Set(
+  commercialDataJson.governance.roles.filter((role) => role.edit).map((role) => role.role),
+);
+
+// Seeded once so this account is never locked out by the write-access change
+// below. Additional editors are granted by inserting/updating rows in
+// `user_roles` (role must be one of EDITABLE_ROLES, active = true).
+const DEFAULT_ADMIN_EMAIL = "marcelinmark@gmail.com";
+
+// Targets for the months the original workbook's monthly tabs didn't cover
+// yet (only Jan-Jul had dedicated sheets at import time). Sold/adjusted stay
+// at 0 until the business books results for these months; edit them inline
+// (same as any other month) once they do.
+const EXTRA_MONTH_TARGETS: Array<{ monthNumber: number; month: string; target: number }> = [
+  { monthNumber: 8, month: "Agosto", target: 27300 },
+  { monthNumber: 9, month: "Setembro", target: 32925 },
+  { monthNumber: 10, month: "Outubro", target: 32975 },
+  { monthNumber: 11, month: "Novembro", target: 27300 },
+  { monthNumber: 12, month: "Dezembro", target: 13650 },
+];
+
+function fullYearTargets(): Target[] {
+  const fromWorkbook: Target[] = commercialDataJson.monthlyMetrics.map((metric) => ({
+    year: 2026,
+    monthNumber: metric.monthNumber,
+    month: metric.month,
+    target: metric.target,
+    sold: metric.sold,
+    adjusted: metric.adjusted,
+  }));
+  const extra: Target[] = EXTRA_MONTH_TARGETS.map((entry) => ({
+    year: 2026,
+    monthNumber: entry.monthNumber,
+    month: entry.month,
+    target: entry.target,
+    sold: 0,
+    adjusted: 0,
+  }));
+  return [...fromWorkbook, ...extra];
+}
 
 function defaultSellerRoster(): Seller[] {
   const names = [...new Set(commercialDataJson.deals2026.map((deal) => deal.owner))]
@@ -107,7 +153,14 @@ function rowToActionItem(row: ActionItemRow): ActionItem {
 const ACTION_ITEM_COLUMNS =
   "id, title, description, owner, horizon, status, source, created_by, updated_by, created_at, updated_at";
 
-type TargetRow = { year: number; month_number: number; month: string; target: number };
+type TargetRow = {
+  year: number;
+  month_number: number;
+  month: string;
+  target: number;
+  sold: number;
+  adjusted: number;
+};
 type D1Row = { payload_json: string };
 type WorkbookRow = {
   sheet_name: string;
@@ -271,6 +324,89 @@ async function ensureStageBackfill(database: D1Database) {
 }
 
 /**
+ * Additive: the original workbook only had monthly tabs through July, so
+ * `ensureSeeded()` never inserts Aug-Dec targets. This backfills them once
+ * (guarded by its own app_state key, never `SEED_VERSION`) so the full year
+ * shows up in the monthly table/selectors — sold/adjusted start at 0 until
+ * the business books results for those months.
+ */
+async function ensureExtraMonthTargets(database: D1Database) {
+  const current = await database
+    .prepare("SELECT value FROM app_state WHERE key = ?")
+    .bind(EXTRA_MONTHS_BACKFILL_KEY)
+    .first<{ value: string }>();
+  if (current) return;
+
+  await runBatches(
+    database,
+    EXTRA_MONTH_TARGETS.map((entry) =>
+      database
+        .prepare(
+          "INSERT INTO monthly_metrics (year, month_number, month, target, sold, adjusted, payload_json) VALUES (?, ?, ?, ?, 0, 0, '{}') ON CONFLICT(year, month_number) DO NOTHING",
+        )
+        .bind(2026, entry.monthNumber, entry.month, entry.target),
+    ),
+  );
+
+  await database
+    .prepare(
+      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
+    )
+    .bind(EXTRA_MONTHS_BACKFILL_KEY, "done")
+    .run();
+}
+
+/**
+ * Additive: grants DEFAULT_ADMIN_EMAIL the "Administrador" role once, so
+ * turning on role-gated write access never locks out the one account that
+ * needs it. Never re-runs (own app_state key), so it won't fight an admin
+ * who later changes/revokes this role on purpose.
+ */
+async function ensureAdminRoleSeed(database: D1Database) {
+  const current = await database
+    .prepare("SELECT value FROM app_state WHERE key = ?")
+    .bind(ADMIN_SEED_KEY)
+    .first<{ value: string }>();
+  if (current) return;
+
+  await database
+    .prepare(
+      "INSERT INTO user_roles (email, role, active, updated_at) VALUES (?, ?, 1, CURRENT_TIMESTAMP) ON CONFLICT(email) DO NOTHING",
+    )
+    .bind(DEFAULT_ADMIN_EMAIL, "Administrador")
+    .run();
+
+  await database
+    .prepare(
+      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
+    )
+    .bind(ADMIN_SEED_KEY, "done")
+    .run();
+}
+
+/**
+ * Write access is gated by `user_roles`, not merely by being signed in.
+ * Unknown emails (no row yet) default to read-only, matching the schema's
+ * own default role ("Diretoria (leitura)"). Locally (`env.DB` unavailable)
+ * there is no real SIWC session anyway, so this only matters when deployed.
+ */
+export async function resolveCanEdit(email: string | null): Promise<boolean> {
+  if (!email) return false;
+  if (!env.DB) return true;
+
+  try {
+    await ensureAdminRoleSeed(env.DB);
+    const row = await env.DB.prepare("SELECT role, active FROM user_roles WHERE email = ?")
+      .bind(email)
+      .first<{ role: string; active: number }>();
+    if (!row || !row.active) return false;
+    return EDITABLE_ROLES.has(row.role);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Additive: seeds the team roster only if the `app_state` key doesn't exist
  * yet — never overwrites, so sellers added later via `POST /api/sellers`
  * are never clobbered by a redeploy.
@@ -330,7 +466,42 @@ export async function addSellerToRoster(database: D1Database, seller: Seller): P
  * (guarded by its own app_state key). Never re-runs, so items created or
  * edited later by users are never overwritten by a redeploy.
  */
+/**
+ * This project has no wrangler.jsonc / migrations_dir wiring, so drizzle
+ * migrations are generated but never auto-applied to the local D1 database
+ * (`npm run db:generate` only writes the SQL file). Creating the table here,
+ * guarded by `IF NOT EXISTS`, makes the action plan self-healing regardless
+ * of whether the migration was actually run against this environment's D1.
+ */
+async function ensureActionItemsTable(database: D1Database) {
+  await database.batch([
+    database.prepare(
+      `CREATE TABLE IF NOT EXISTS action_items (
+        id text PRIMARY KEY NOT NULL,
+        title text NOT NULL,
+        description text DEFAULT '' NOT NULL,
+        owner text,
+        horizon text DEFAULT 'h1' NOT NULL,
+        status text DEFAULT 'pendente' NOT NULL,
+        source text,
+        created_by text,
+        updated_by text,
+        created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+      )`,
+    ),
+    database.prepare(
+      "CREATE INDEX IF NOT EXISTS action_items_status_idx ON action_items (status)",
+    ),
+    database.prepare(
+      "CREATE INDEX IF NOT EXISTS action_items_horizon_idx ON action_items (horizon)",
+    ),
+  ]);
+}
+
 async function ensureActionItemsSeed(database: D1Database) {
+  await ensureActionItemsTable(database);
+
   const current = await database
     .prepare("SELECT value FROM app_state WHERE key = ?")
     .bind(ACTION_ITEMS_SEED_KEY)
@@ -385,6 +556,7 @@ export async function addActionItem(
     actorEmail: string;
   },
 ): Promise<ActionItem> {
+  await ensureActionItemsTable(database);
   const id = crypto.randomUUID();
   await database
     .prepare(
@@ -423,6 +595,7 @@ export async function updateActionItem(
   }>,
   actorEmail: string,
 ): Promise<ActionItem | null> {
+  await ensureActionItemsTable(database);
   const existing = await database
     .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
     .bind(id)
@@ -452,6 +625,7 @@ export async function updateActionItem(
 }
 
 export async function deleteActionItem(database: D1Database, id: string): Promise<ActionItem | null> {
+  await ensureActionItemsTable(database);
   const existing = await database
     .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
     .bind(id)
@@ -494,6 +668,7 @@ export async function readDealsAndTargets(
 ): Promise<{ deals: Deal[]; targets: Target[] }> {
   await ensureSeeded(database);
   await ensureStageBackfill(database);
+  await ensureExtraMonthTargets(database);
 
   const [dealResult, targetResult] = await Promise.all([
     database
@@ -502,7 +677,9 @@ export async function readDealsAndTargets(
       )
       .all<CommercialDealRow>(),
     database
-      .prepare("SELECT year, month_number, month, target FROM monthly_metrics ORDER BY month_number")
+      .prepare(
+        "SELECT year, month_number, month, target, sold, adjusted FROM monthly_metrics ORDER BY month_number",
+      )
       .all<TargetRow>(),
   ]);
 
@@ -512,6 +689,8 @@ export async function readDealsAndTargets(
     monthNumber: row.month_number,
     month: row.month,
     target: row.target,
+    sold: row.sold,
+    adjusted: row.adjusted,
   }));
 
   return { deals, targets };
@@ -528,12 +707,7 @@ function buildFromStaticJson(asOf: string): CommercialData {
     updatedBy: "import",
   })) as Deal[];
 
-  const targets: Target[] = commercialDataJson.monthlyMetrics.map((metric) => ({
-    year: 2026,
-    monthNumber: metric.monthNumber,
-    month: metric.month,
-    target: metric.target,
-  }));
+  const targets: Target[] = fullYearTargets();
 
   const sellers = defaultSellerRoster();
   const derived = deriveMetrics({

@@ -3335,3 +3335,52 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+.bitrix-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--atlas-line);
+}
+
+.bitrix-summary-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: #f7f5f1;
+}
+
+.bitrix-summary-grid span {
+  color: var(--atlas-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.bitrix-summary-grid strong {
+  font-size: 15px;
+}
+
+.bitrix-pipeline-table {
+  margin: 16px 0;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.bitrix-pipeline-table .data-table {
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .bitrix-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .bitrix-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}

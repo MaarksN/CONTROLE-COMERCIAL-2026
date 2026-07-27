@@ -1036,7 +1036,10 @@ export function CommercialControl({
       if (exists) {
         return prev.map((t) => (t.monthNumber === monthNumber ? { ...t, target: value } : t));
       }
-      return [...prev, { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value }];
+      return [
+        ...prev,
+        { year, monthNumber, month: MONTH_NAMES[monthNumber - 1], target: value, sold: 0, adjusted: 0 },
+      ];
     });
 
     try {
@@ -1475,8 +1478,12 @@ export function CommercialControl({
 
         {isReadOnly && (
           <div className="readonly-banner">
-            <span>Modo somente leitura — entre para criar, editar e mover negócios.</span>
-            <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>
+            <span>
+              {user.isPreview
+                ? "Modo somente leitura — entre para criar, editar e mover negócios."
+                : "Sua conta não tem permissão de edição neste painel. Peça a um administrador para liberar seu acesso em user_roles."}
+            </span>
+            {user.isPreview && <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>}
           </div>
         )}
 
@@ -1659,6 +1666,39 @@ export function CommercialControl({
                   </div>
                   <span className="issue-count">{BITRIX_AUDIT_REFERENCE.source}</span>
                 </div>
+
+                <div className="bitrix-summary-grid">
+                  <div>
+                    <span>Win rate</span>
+                    <strong>{percent.format(BITRIX_AUDIT_REFERENCE.summary.winRatePct)}</strong>
+                  </div>
+                  <div>
+                    <span>Loss rate</span>
+                    <strong>{percent.format(BITRIX_AUDIT_REFERENCE.summary.lossRatePct)}</strong>
+                  </div>
+                  <div>
+                    <span>Ticket médio</span>
+                    <strong>{preciseCurrency.format(BITRIX_AUDIT_REFERENCE.summary.ticketMedio)}</strong>
+                  </div>
+                  <div>
+                    <span>Cobertura de pipeline</span>
+                    <strong>
+                      {BITRIX_AUDIT_REFERENCE.summary.coberturaPipeline.toFixed(2).replace(".", ",")}×
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Lead time</span>
+                    <strong>{BITRIX_AUDIT_REFERENCE.summary.leadTimeDias.toFixed(1).replace(".", ",")}d</strong>
+                  </div>
+                  <div>
+                    <span>Ganhos / Perdidos / Abertos</span>
+                    <strong>
+                      {BITRIX_AUDIT_REFERENCE.summary.dealsGanhos}/{BITRIX_AUDIT_REFERENCE.summary.dealsPerdidos}/
+                      {BITRIX_AUDIT_REFERENCE.summary.dealsAbertos}
+                    </strong>
+                  </div>
+                </div>
+
                 <div className="bottleneck-list">
                   {BITRIX_AUDIT_REFERENCE.riscos.map((item) => (
                     <div key={item.label} className="bottleneck-item severity-alta">
@@ -1674,7 +1714,7 @@ export function CommercialControl({
                   ))}
                   {BITRIX_AUDIT_REFERENCE.concentracao.map((item) => (
                     <div key={item.owner} className="bottleneck-item severity-baixa">
-                      <strong>{item.owner}</strong>
+                      <strong>{item.owner} — {item.value}</strong>
                       <p>{item.detail}</p>
                     </div>
                   ))}
