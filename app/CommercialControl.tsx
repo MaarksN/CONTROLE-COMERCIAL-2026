@@ -1543,10 +1543,10 @@ export function CommercialControl({
             </div>
 
             <p className="dashboard-note">
-              Nota de metodologia: não há meta de 2025 nos dados importados, então &ldquo;aumento
-              do atingimento de meta&rdquo; é reportado como crescimento de receita ano a ano
-              (YoY) e como quantos meses de 2026 bateram a própria meta — não como comparação
-              direta de % de atingimento entre os dois anos.
+              Nota de metodologia: não há meta de 2025 nos dados importados, então &quot;aumento do
+              atingimento de meta&quot; é reportado como crescimento de receita ano a ano (YoY) e como
+              quantos meses de 2026 bateram a própria meta — não como comparação direta de % de
+              atingimento entre os dois anos.
             </p>
 
             <article className="panel dashboard-months-panel">
@@ -1706,47 +1706,12 @@ export function CommercialControl({
                       <p>{item.detail}</p>
                     </div>
                   ))}
-                </div>
-
-                <div className="data-table-wrap bitrix-pipeline-table">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Pipeline</th>
-                        <th>Negócios</th>
-                        <th>Valor total</th>
-                        <th>Valor ganho</th>
-                        <th>Win rate</th>
-                        <th>Retrabalho</th>
-                        <th>Gargalos</th>
-                        <th>Pior etapa</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {BITRIX_AUDIT_REFERENCE.pipelines.map((p) => (
-                        <tr key={p.nome}>
-                          <td><strong>{p.nome}</strong></td>
-                          <td>{p.negocios}</td>
-                          <td>{currency.format(p.valorTotal)}</td>
-                          <td>{currency.format(p.valorGanho)}</td>
-                          <td>{percent.format(p.winRatePct)}</td>
-                          <td>
-                            {percent.format(p.retrabalhoPct)} ({p.retrabalhoCount})
-                          </td>
-                          <td>{p.gargalos}</td>
-                          <td>
-                            {p.piorEtapa}
-                            {p.piorEtapaDias !== null
-                              ? ` · ${p.piorEtapaDias.toFixed(1).replace(".", ",")}d`
-                              : ""}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="bottleneck-list">
+                  {BITRIX_AUDIT_REFERENCE.pioresEtapas.map((item) => (
+                    <div key={`${item.pipeline}-${item.etapa}`} className="bottleneck-item severity-média">
+                      <strong>{item.pipeline} — {item.dias.toFixed(1).replace(".", ",")}d parado</strong>
+                      <p>Pior etapa observada: &quot;{item.etapa}&quot;.</p>
+                    </div>
+                  ))}
                   {BITRIX_AUDIT_REFERENCE.concentracao.map((item) => (
                     <div key={item.owner} className="bottleneck-item severity-baixa">
                       <strong>{item.owner} — {item.value}</strong>
