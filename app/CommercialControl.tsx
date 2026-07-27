@@ -1536,8 +1536,8 @@ export function CommercialControl({
             </div>
 
             <p className="dashboard-note">
-              Nota de metodologia: não há meta de 2025 nos dados importados, então "aumento do
-              atingimento de meta" é reportado como crescimento de receita ano a ano (YoY) e como
+              Nota de metodologia: não há meta de 2025 nos dados importados, então &quot;aumento do
+              atingimento de meta&quot; é reportado como crescimento de receita ano a ano (YoY) e como
               quantos meses de 2026 bateram a própria meta — não como comparação direta de % de
               atingimento entre os dois anos.
             </p>
@@ -1669,7 +1669,7 @@ export function CommercialControl({
                   {BITRIX_AUDIT_REFERENCE.pioresEtapas.map((item) => (
                     <div key={`${item.pipeline}-${item.etapa}`} className="bottleneck-item severity-média">
                       <strong>{item.pipeline} — {item.dias.toFixed(1).replace(".", ",")}d parado</strong>
-                      <p>Pior etapa observada: "{item.etapa}".</p>
+                      <p>Pior etapa observada: &quot;{item.etapa}&quot;.</p>
                     </div>
                   ))}
                   {BITRIX_AUDIT_REFERENCE.concentracao.map((item) => (
