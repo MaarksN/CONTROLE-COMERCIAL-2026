@@ -27,6 +27,7 @@ import {
   computeForecastScenarios,
 } from "./deriveRevenueIntelligence";
 import { computeSalesHealthScore } from "./deriveHealthScore";
+import { AssistantWidget } from "./AssistantWidget";
 import { computeAlerts, type AlertState } from "./deriveAlerts";
 import { computeSellerPerformanceScore } from "./deriveSellerScore";
 import { ENTERPRISE_ROADMAP } from "./deriveEnterpriseRoadmap";
@@ -2930,8 +2931,8 @@ export function CommercialControl({
               </div>
             </div>
 
-            <div className="kpi-grid">
-              <article className="kpi-card accent">
+            <div className="kpi-grid card-3d-wrapper">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner accent">
                 <span>Crescimento de receita YoY</span>
                 <strong>
                   {dashboardInsights.yoy.growthPct === null
@@ -2940,19 +2941,19 @@ export function CommercialControl({
                 </strong>
                 <small>vendido 2026 vs. 2025 nos meses em comum</small>
               </article>
-              <article className="kpi-card">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                 <span>Meses acima da meta em 2026</span>
                 <strong>
                   {dashboardInsights.yoy.monthsAboveTarget2026}/{dashboardInsights.yoy.totalMonths2026}
                 </strong>
                 <small>{dashboardInsights.yoy.monthsAtOrBelowTarget2026} mês(es) abaixo da meta</small>
               </article>
-              <article className="kpi-card">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                 <span>Vendido 2025 (período comparável)</span>
                 <strong>{currency.format(dashboardInsights.yoy.sold2025PeriodTotal)}</strong>
                 <small>mesmos meses cobertos por 2026</small>
               </article>
-              <article className="kpi-card">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                 <span>Vendido 2026 (mesmo período)</span>
                 <strong>{currency.format(dashboardInsights.yoy.sold2026PeriodTotal)}</strong>
                 <small>{deals.length} negócios no ano</small>
@@ -2966,7 +2967,7 @@ export function CommercialControl({
               atingimento entre os dois anos.
             </p>
 
-            <article className="panel dashboard-months-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner dashboard-months-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Todos os meses</span>
@@ -3030,7 +3031,7 @@ export function CommercialControl({
               </div>
             </article>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Progressão do ano</span>
@@ -3066,7 +3067,7 @@ export function CommercialControl({
             </article>
 
             <div className="dashboard-bottleneck-grid">
-              <article className="panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner">
                 <div className="panel-heading">
                   <div>
                     <span className="section-kicker">Gargalos ao vivo</span>
@@ -3101,7 +3102,7 @@ export function CommercialControl({
                 )}
               </article>
 
-              <article className="panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner">
                 <div className="panel-heading">
                   <div>
                     <span className="section-kicker">Referência externa</span>
@@ -3169,7 +3170,7 @@ export function CommercialControl({
               </article>
             </div>
 
-            <article className="panel action-plan-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner action-plan-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Plano de ação</span>
@@ -3249,19 +3250,19 @@ export function CommercialControl({
               </p>
             )}
 
-            <div className="kpi-grid">
-              <article className="kpi-card">
+            <div className="kpi-grid card-3d-wrapper">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                 <span>Meta de {forecastScenarios.monthName}</span>
                 <strong>{currency.format(forecastScenarios.target)}</strong>
                 <small>meta oficial do mês</small>
               </article>
-              <article className="kpi-card">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                 <span>Realizado + comprometido (Commit)</span>
                 <strong>{currency.format(forecastScenarios.commitScenario)}</strong>
                 <small>pago + ganho/faturado — alta certeza</small>
               </article>
               <article
-                className="kpi-card clickable-row"
+                className="kpi-card rounded-2xl glassmorphism card-3d-inner clickable-row"
                 onClick={() =>
                   setDrilldown({
                     title: "Pipeline aberto do mês",
@@ -3275,7 +3276,7 @@ export function CommercialControl({
                 <strong>{currency.format(forecastScenarios.bestCaseScenario)}</strong>
                 <small>{currency.format(forecastScenarios.pipelineOpen)} em aberto — clique para ver</small>
               </article>
-              <article className="kpi-card accent">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner accent">
                 <span>Forecast ponderado (AI)</span>
                 <strong>{currency.format(forecastScenarios.aiForecastScenario)}</strong>
                 <small>
@@ -3283,7 +3284,7 @@ export function CommercialControl({
                   {currency.format(forecastScenarios.weightedPipelineOpen)} de pipeline ponderado
                 </small>
               </article>
-              <article className="kpi-card">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                 <span>Gap para a meta</span>
                 <strong className={forecastScenarios.gapToTarget > 0 ? "negative-delta" : "positive-delta"}>
                   {currency.format(Math.abs(forecastScenarios.gapToTarget))}
@@ -3295,7 +3296,7 @@ export function CommercialControl({
                     : "Meta já coberta pelo forecast ponderado"}
                 </small>
               </article>
-              <article className="kpi-card">
+              <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                 <span>Aderência projetada</span>
                 <strong>
                   {forecastScenarios.projectedAttainment === null
@@ -3306,7 +3307,7 @@ export function CommercialControl({
               </article>
             </div>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Classificação de receita</span>
@@ -3338,7 +3339,7 @@ export function CommercialControl({
               </div>
             </article>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Sales Health Score</span>
@@ -3373,7 +3374,7 @@ export function CommercialControl({
               </div>
             </article>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Alertas inteligentes</span>
@@ -3560,25 +3561,25 @@ export function CommercialControl({
                   <div className="atlas-angle" aria-hidden="true" />
                 </div>
 
-                <div className="kpi-grid">
-                  <article className="kpi-card">
+                <div className="kpi-grid card-3d-wrapper">
+                  <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                     <span>Realização da meta</span>
                     <strong>{percent.format(visaoCompanySummary.attainment)}</strong>
                     <small>{healthLabel(visaoCompanySummary.attainment)}</small>
                   </article>
-                  <article className="kpi-card">
+                  <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                     <span>Conversão em receita</span>
                     <strong>{percent.format(visaoCompanySummary.realization)}</strong>
                     <small>ajustado ÷ vendido</small>
                   </article>
-                  <article className="kpi-card">
+                  <article className="kpi-card rounded-2xl glassmorphism card-3d-inner">
                     <span>Ciclo comercial médio</span>
                     <strong>
                       {visaoCompanySummary.averageSalesCycle.toFixed(1).replace(".", ",")}d
                     </strong>
                     <small>proposta até assinatura</small>
                   </article>
-                  <article className="kpi-card accent">
+                  <article className="kpi-card rounded-2xl glassmorphism card-3d-inner accent">
                     <span>
                       {visaoMonth === "todos"
                         ? `Forecast de ${currentMonthMetric?.month ?? "mês atual"}`
@@ -3595,8 +3596,8 @@ export function CommercialControl({
                   </article>
                 </div>
 
-                <div className="overview-grid">
-                  <article className="panel revenue-panel">
+                <div className="overview-grid card-3d-wrapper">
+                  <article className="panel rounded-3xl glassmorphism card-3d-inner revenue-panel">
                     <div className="panel-heading">
                       <div>
                         <span className="section-kicker">Performance mensal</span>
@@ -3655,7 +3656,7 @@ export function CommercialControl({
                     </div>
                   </article>
 
-                  <article className="panel attention-panel">
+                  <article className="panel rounded-3xl glassmorphism card-3d-inner attention-panel">
                     <div className="panel-heading">
                       <div>
                         <span className="section-kicker">Sala de decisão</span>
@@ -3786,7 +3787,7 @@ export function CommercialControl({
                 </div>
 
                 {visaoMonth === "todos" && (
-                  <article className="panel seller-month-panel">
+                  <article className="panel rounded-3xl glassmorphism card-3d-inner seller-month-panel">
                     <div className="panel-heading">
                       <div>
                         <span className="section-kicker">Evolução mensal</span>
@@ -3817,7 +3818,7 @@ export function CommercialControl({
                   </article>
                 )}
 
-                <article className="panel seller-closed-panel">
+                <article className="panel rounded-3xl glassmorphism card-3d-inner seller-closed-panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-kicker">Histórico</span>
@@ -3857,7 +3858,7 @@ export function CommercialControl({
                   </div>
                 </article>
 
-                <article className="panel growth-plan-panel">
+                <article className="panel rounded-3xl glassmorphism card-3d-inner growth-plan-panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-kicker">Plano de crescimento</span>
@@ -4095,7 +4096,7 @@ export function CommercialControl({
                 ))}
               </div>
             ) : (
-              <article className="panel table-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner table-panel">
                 <div className="data-table-wrap">
                   <table className="data-table">
                     <thead>
@@ -4389,7 +4390,7 @@ export function CommercialControl({
               const score = sellerScores.get(selectedOwner);
               if (!score) return null;
               return (
-                <article className="panel seller-score-panel">
+                <article className="panel rounded-3xl glassmorphism card-3d-inner seller-score-panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-kicker">Sales Performance Score</span>
@@ -4428,7 +4429,7 @@ export function CommercialControl({
             })()}
 
             <div className="seller-detail-grid">
-              <article className="panel seller-month-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner seller-month-panel">
                 <div className="panel-heading">
                   <div>
                     <span className="section-kicker">Evolução mensal</span>
@@ -4456,7 +4457,7 @@ export function CommercialControl({
                 </div>
               </article>
 
-              <article className="panel seller-summary-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner seller-summary-panel">
                 <span className="section-kicker">Leitura rápida</span>
                 <h3>Resumo da carteira</h3>
                 <dl>
@@ -4484,7 +4485,7 @@ export function CommercialControl({
               </article>
             </div>
 
-            <article className="panel seller-deals-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner seller-deals-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Carteira separada</span>
@@ -4536,7 +4537,7 @@ export function CommercialControl({
             </article>
 
             <div className="team-grid">
-              <article className="panel ranking-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner ranking-panel">
                 <div className="panel-heading">
                   <div>
                     <span className="section-kicker">Ranking</span>
@@ -4571,7 +4572,7 @@ export function CommercialControl({
                 </div>
               </article>
 
-              <article className="panel channel-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner channel-panel">
                 <div className="panel-heading">
                   <div>
                     <span className="section-kicker">Aquisição</span>
@@ -4602,7 +4603,7 @@ export function CommercialControl({
               </article>
             </div>
 
-            <article className="panel historical-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner historical-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Histórico preservado</span>
@@ -4650,7 +4651,7 @@ export function CommercialControl({
             </div>
 
             <div className="governance-grid">
-              <article className="panel rhythm-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner rhythm-panel">
                 <div className="panel-heading">
                   <div>
                     <span className="section-kicker">Modelo operacional</span>
@@ -4677,7 +4678,7 @@ export function CommercialControl({
                 </div>
               </article>
 
-              <article className="panel approval-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner approval-panel">
                 <div className="panel-heading">
                   <div>
                     <span className="section-kicker">Controles</span>
@@ -4692,7 +4693,7 @@ export function CommercialControl({
               </article>
             </div>
 
-            <article className="panel activity-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner activity-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Trilha de auditoria</span>
@@ -4790,7 +4791,7 @@ export function CommercialControl({
               )}
             </article>
 
-            <article className="panel access-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner access-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Segregação de funções</span>
@@ -4829,7 +4830,7 @@ export function CommercialControl({
               </div>
             </article>
 
-            <article className="panel quality-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner quality-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Qualidade da informação · ao vivo</span>
@@ -4852,7 +4853,7 @@ export function CommercialControl({
               </div>
             </article>
 
-            <article className="panel quality-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner quality-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Qualidade da informação · histórico</span>
@@ -4889,7 +4890,7 @@ export function CommercialControl({
               )}
             </article>
 
-            <article className="panel roadmap-panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner roadmap-panel">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Roadmap Enterprise</span>
@@ -4970,7 +4971,7 @@ export function CommercialControl({
                 ))}
               </aside>
 
-              <article className="panel sheet-panel">
+              <article className="panel rounded-3xl glassmorphism card-3d-inner sheet-panel">
                 <div className="sheet-toolbar">
                   <div>
                     <span className="section-kicker">Aba selecionada</span>
@@ -5055,7 +5056,7 @@ export function CommercialControl({
               </div>
             </div>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Chaves de API</span>
@@ -5160,7 +5161,7 @@ export function CommercialControl({
               </form>
             </article>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Bitrix24</span>
@@ -5263,7 +5264,7 @@ export function CommercialControl({
               )}
             </article>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Prospecção</span>
@@ -5362,7 +5363,7 @@ export function CommercialControl({
               )}
             </article>
 
-            <article className="panel">
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
               <div className="panel-heading">
                 <div>
                   <span className="section-kicker">Relatórios</span>
@@ -5393,6 +5394,8 @@ export function CommercialControl({
           <span>Segurança · Governança · Previsibilidade</span>
         </footer>
       </main>
+
+      <AssistantWidget dataContext={{ deals, objectives }} />
 
       {dealModal && (
         <DealModal

@@ -4148,3 +4148,52 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* 3D and Atlas Design Trend 2026 Utilities */
+.card-3d-wrapper {
+  perspective: 1500px;
+}
+
+.card-3d-inner {
+  transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s ease;
+  transform-style: preserve-3d;
+}
+
+.card-3d-inner:hover {
+  transform: rotateX(3deg) rotateY(-3deg) translateZ(8px);
+  box-shadow: -15px 15px 30px rgba(255, 86, 24, 0.15), 0 10px 20px rgba(51, 51, 51, 0.1);
+}
+
+.glassmorphism {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.glassmorphism-dark {
+  background: rgba(51, 51, 51, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 86, 24, 0.3);
+}
+
+.rounded-3xl {
+  border-radius: 1.5rem;
+}
+
+.rounded-2xl {
+  border-radius: 1rem;
+}
+
+.floating-widget {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 100;
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(255, 86, 24, 0.2);
+  transition: all 0.3s ease;
+}
+
