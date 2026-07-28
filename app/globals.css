@@ -763,9 +763,10 @@ button {
 
 .decision-strip button,
 .primary-button {
-  min-height: 46px;
-  padding: 0 18px;
+  min-height: 48px;
+  padding: 0 24px;
   border: 0;
+  border-radius: 12px;
   background: var(--atlas-graphite);
   color: var(--atlas-white);
   cursor: pointer;
@@ -773,11 +774,15 @@ button {
   font-weight: 750;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
 }
 
 .decision-strip button:hover,
 .primary-button:hover {
   background: var(--atlas-orange);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(255,86,24,0.25);
 }
 
 .decision-strip button b {
@@ -4022,9 +4027,45 @@ button {
 
 /* Integrations */
 .integration-form {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
   padding: 0 0 22px;
 }
+
+.integration-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.integration-form label span {
+  color: var(--atlas-muted);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.integration-form input,
+.integration-form select {
+  padding: 12px 16px;
+  border: 1px solid var(--atlas-line);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.7);
+  font-size: 15px;
+  font-family: inherit;
+  transition: all 0.3s ease;
+}
+
+.integration-form input:focus,
+.integration-form select:focus {
+  border-color: var(--atlas-orange);
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(255,86,24,0.15);
+  background: white;
+}
+
 
 .integration-actions {
   display: flex;
@@ -4083,10 +4124,20 @@ button {
 }
 
 .lead-search-form input {
-  padding: 9px 11px;
+  padding: 12px 16px;
   border: 1px solid var(--atlas-line);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.7);
   font-size: 15px;
   font-family: inherit;
+  transition: all 0.3s ease;
+}
+
+.lead-search-form input:focus {
+  border-color: var(--atlas-orange);
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(255,86,24,0.15);
+  background: white;
 }
 
 .lead-result-card {

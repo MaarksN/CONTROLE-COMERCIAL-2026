@@ -2894,17 +2894,6 @@ export function CommercialControl({
           </div>
         </header>
 
-        {isReadOnly && (
-          <div className="readonly-banner">
-            <span>
-              {user.isPreview
-                ? "Modo somente leitura — entre para criar, editar e mover negócios."
-                : "Sua conta não tem permissão de edição neste painel. Peça a um administrador para liberar seu acesso em user_roles."}
-            </span>
-            {user.isPreview && <a href="/signin-with-chatgpt?return_to=%2F">Entrar</a>}
-          </div>
-        )}
-
         <div className="mobile-nav" aria-label="Navegação móvel">
           {navItems.map((item) => (
             <button
