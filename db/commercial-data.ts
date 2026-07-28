@@ -84,6 +84,9 @@ function defaultSellerRoster(): Seller[] {
 
 type StaticData = typeof commercialDataJson;
 
+export type Objective = StaticData["objectives"][number];
+export type ObjectiveKeyResult = Objective["keyResults"][number];
+
 export type CommercialData = {
   meta: StaticData["meta"];
   asOf: string;
@@ -829,8 +832,198 @@ export async function upsertAlertState(
   return rowToAlertState(row);
 }
 
+export type IntegrationSettings = {
+  bitrixWebhookUrl: string | null;
+  apolloApiKey: string | null;
+  googleApiKey: string | null;
+  aiProvider: "auto" | "openai" | "anthropic";
+  openaiApiKey: string | null;
+  anthropicApiKey: string | null;
+  updatedBy: string | null;
+  updatedAt: string;
+};
+
+type IntegrationSettingsRow = {
+  bitrix_webhook_url: string | null;
+  apollo_api_key: string | null;
+  google_api_key: string | null;
+  ai_provider: string;
+  openai_api_key: string | null;
+  anthropic_api_key: string | null;
+  updated_by: string | null;
+  updated_at: string;
+};
+
+const INTEGRATION_SETTINGS_COLUMNS =
+  "bitrix_webhook_url, apollo_api_key, google_api_key, ai_provider, openai_api_key, anthropic_api_key, updated_by, updated_at";
+
+const EMPTY_INTEGRATION_SETTINGS: IntegrationSettings = {
+  bitrixWebhookUrl: null,
+  apolloApiKey: null,
+  googleApiKey: null,
+  aiProvider: "auto",
+  openaiApiKey: null,
+  anthropicApiKey: null,
+  updatedBy: null,
+  updatedAt: new Date(0).toISOString(),
+};
+
+function rowToIntegrationSettings(row: IntegrationSettingsRow): IntegrationSettings {
+  return {
+    bitrixWebhookUrl: row.bitrix_webhook_url,
+    apolloApiKey: row.apollo_api_key,
+    googleApiKey: row.google_api_key,
+    aiProvider: (row.ai_provider as IntegrationSettings["aiProvider"]) || "auto",
+    openaiApiKey: row.openai_api_key,
+    anthropicApiKey: row.anthropic_api_key,
+    updatedBy: row.updated_by,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Self-healing table for third-party credentials (Bitrix/Apollo/Google/AI).
+ * Same rationale as `ensureAlertStateTable`: no migration is auto-applied in
+ * production, so the table is created here, guarded by `IF NOT EXISTS`.
+ * Single row, `id = "default"`. Stored in plain text — see the comment on
+ * `integrationSettings` in db/schema.ts for why, and never expose the raw
+ * values outside of a `requireUser()`-gated route.
+ */
+async function ensureIntegrationSettingsTable(database: D1Database) {
+  await database.prepare(
+    `CREATE TABLE IF NOT EXISTS integration_settings (
+      id text PRIMARY KEY NOT NULL DEFAULT 'default',
+      bitrix_webhook_url text,
+      apollo_api_key text,
+      google_api_key text,
+      ai_provider text DEFAULT 'auto' NOT NULL,
+      openai_api_key text,
+      anthropic_api_key text,
+      updated_by text,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    )`,
+  ).run();
+}
+
+export async function readIntegrationSettings(
+  database: D1Database,
+): Promise<IntegrationSettings> {
+  await ensureIntegrationSettingsTable(database);
+  const row = await database
+    .prepare(
+      `SELECT ${INTEGRATION_SETTINGS_COLUMNS} FROM integration_settings WHERE id = 'default'`,
+    )
+    .first<IntegrationSettingsRow>();
+  return row ? rowToIntegrationSettings(row) : EMPTY_INTEGRATION_SETTINGS;
+}
+
+/** Fields left `undefined` keep their current stored value (used so a blank form field never clears an existing key). */
+export async function upsertIntegrationSettings(
+  database: D1Database,
+  input: {
+    bitrixWebhookUrl?: string | null;
+    apolloApiKey?: string | null;
+    googleApiKey?: string | null;
+    aiProvider?: IntegrationSettings["aiProvider"];
+    openaiApiKey?: string | null;
+    anthropicApiKey?: string | null;
+    updatedBy: string;
+  },
+): Promise<IntegrationSettings> {
+  await ensureIntegrationSettingsTable(database);
+  const current = await readIntegrationSettings(database);
+  const next: IntegrationSettings = {
+    bitrixWebhookUrl:
+      input.bitrixWebhookUrl !== undefined ? input.bitrixWebhookUrl : current.bitrixWebhookUrl,
+    apolloApiKey: input.apolloApiKey !== undefined ? input.apolloApiKey : current.apolloApiKey,
+    googleApiKey: input.googleApiKey !== undefined ? input.googleApiKey : current.googleApiKey,
+    aiProvider: input.aiProvider ?? current.aiProvider,
+    openaiApiKey: input.openaiApiKey !== undefined ? input.openaiApiKey : current.openaiApiKey,
+    anthropicApiKey:
+      input.anthropicApiKey !== undefined ? input.anthropicApiKey : current.anthropicApiKey,
+    updatedBy: input.updatedBy,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await database
+    .prepare(
+      `INSERT INTO integration_settings (id, bitrix_webhook_url, apollo_api_key, google_api_key, ai_provider, openai_api_key, anthropic_api_key, updated_by, updated_at)
+       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         bitrix_webhook_url = excluded.bitrix_webhook_url,
+         apollo_api_key = excluded.apollo_api_key,
+         google_api_key = excluded.google_api_key,
+         ai_provider = excluded.ai_provider,
+         openai_api_key = excluded.openai_api_key,
+         anthropic_api_key = excluded.anthropic_api_key,
+         updated_by = excluded.updated_by,
+         updated_at = excluded.updated_at`,
+    )
+    .bind(
+      next.bitrixWebhookUrl,
+      next.apolloApiKey,
+      next.googleApiKey,
+      next.aiProvider,
+      next.openaiApiKey,
+      next.anthropicApiKey,
+      next.updatedBy,
+      next.updatedAt,
+    )
+    .run();
+
+  return next;
+}
+
 function parsePayloads<T>(rows: D1Row[]): T[] {
   return rows.map((row) => JSON.parse(row.payload_json) as T);
+}
+
+export async function readObjectives(database: D1Database): Promise<Objective[]> {
+  const rows = await database.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>();
+  return parsePayloads<Objective>(rows.results);
+}
+
+/** Mirrors the read-only ratio calc in CommercialControl.tsx's OKR card so progress stays consistent. */
+function computeObjectiveProgress(keyResults: ObjectiveKeyResult[]): number {
+  if (keyResults.length === 0) return 0;
+  const ratios = keyResults.map((kr) =>
+    kr.inverse
+      ? kr.target / Math.max(kr.actual, 0.0001)
+      : kr.actual / Math.max(kr.target, 0.0001),
+  );
+  return ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length;
+}
+
+export async function updateObjective(
+  database: D1Database,
+  id: string,
+  patch: { title: string; owner: string; cadence: string; keyResults: ObjectiveKeyResult[] },
+): Promise<Objective> {
+  const row = await database
+    .prepare("SELECT payload_json FROM objectives WHERE id = ?")
+    .bind(id)
+    .first<D1Row>();
+  if (!row) throw new Error("Objetivo não encontrado.");
+
+  const existing = JSON.parse(row.payload_json) as Objective;
+  const progress = computeObjectiveProgress(patch.keyResults);
+  const next: Objective = {
+    ...existing,
+    title: patch.title,
+    owner: patch.owner,
+    cadence: patch.cadence,
+    keyResults: patch.keyResults,
+    progress,
+  };
+
+  await database
+    .prepare(
+      "UPDATE objectives SET title = ?, owner = ?, progress = ?, payload_json = ? WHERE id = ?",
+    )
+    .bind(next.title, next.owner, next.progress, JSON.stringify(next), id)
+    .run();
+
+  return next;
 }
 
 export function rowToDeal(row: CommercialDealRow): Deal {

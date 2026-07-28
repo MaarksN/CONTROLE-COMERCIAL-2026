@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   deriveMetrics,
   MONTH_NAMES,
@@ -22,7 +22,15 @@ import {
   type ActionItem,
   type ActionStatus,
 } from "./deriveDashboard";
-import type { CommercialData } from "@/db/commercial-data";
+import {
+  classifyRevenue,
+  computeForecastScenarios,
+} from "./deriveRevenueIntelligence";
+import { computeSalesHealthScore } from "./deriveHealthScore";
+import { computeAlerts, type AlertState } from "./deriveAlerts";
+import { computeSellerPerformanceScore } from "./deriveSellerScore";
+import { ENTERPRISE_ROADMAP } from "./deriveEnterpriseRoadmap";
+import type { CommercialData, Objective, ObjectiveKeyResult } from "@/db/commercial-data";
 
 type User = {
   displayName: string;
@@ -40,25 +48,76 @@ type ActivityEntry = {
   createdAt: string;
 };
 
+type IntegrationSettingsView = {
+  bitrixConfigured: boolean;
+  bitrixWebhookMasked: string | null;
+  apolloConfigured: boolean;
+  apolloKeyMasked: string | null;
+  googleConfigured: boolean;
+  googleKeyMasked: string | null;
+  aiProvider: "auto" | "openai" | "anthropic";
+  openaiConfigured: boolean;
+  openaiKeyMasked: string | null;
+  anthropicConfigured: boolean;
+  anthropicKeyMasked: string | null;
+};
+
+type BitrixImportItem = {
+  bitrixId: string;
+  title: string;
+  amount: number;
+  stageId: string;
+  dateCreate: string;
+};
+
+type EnrichedLead = {
+  name: string | null;
+  company: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  website: string | null;
+  source: "apollo" | "google";
+};
+
 type Section =
   | "capa"
   | "dashboard"
+  | "inteligencia"
   | "visao"
   | "pipeline"
   | "okrs"
   | "equipe"
   | "governanca"
-  | "dados";
+  | "dados"
+  | "integracoes";
 
-const navItems: Array<{ id: Section; label: string; index: string }> = [
+const navItems: Array<{ id: Exclude<Section, "capa">; label: string; index: string }> = [
   { id: "dashboard", label: "Dashboard", index: "00" },
-  { id: "visao", label: "Visão completa", index: "01" },
-  { id: "pipeline", label: "Negócios", index: "02" },
-  { id: "okrs", label: "OKRs", index: "03" },
-  { id: "equipe", label: "Equipe & canais", index: "04" },
-  { id: "governanca", label: "Governança", index: "05" },
-  { id: "dados", label: "Base completa", index: "06" },
+  { id: "inteligencia", label: "Inteligência de receita", index: "01" },
+  { id: "visao", label: "Visão completa", index: "02" },
+  { id: "pipeline", label: "Negócios", index: "03" },
+  { id: "okrs", label: "OKRs", index: "04" },
+  { id: "equipe", label: "Equipe & canais", index: "05" },
+  { id: "governanca", label: "Governança", index: "06" },
+  { id: "dados", label: "Base completa", index: "07" },
+  { id: "integracoes", label: "Integrações", index: "08" },
 ];
+
+const SECTION_ICONS: Record<Exclude<Section, "capa">, string> = {
+  dashboard: "📊",
+  inteligencia: "🧠",
+  visao: "🗂️",
+  pipeline: "🧩",
+  okrs: "🎯",
+  equipe: "👥",
+  governanca: "⚖️",
+  dados: "📚",
+  integracoes: "🔌",
+};
+
+const WEEKDAY_LABELS = ["D", "S", "T", "Q", "Q", "S", "S"];
 
 const currency = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -148,6 +207,45 @@ function relativeTimestamp(iso: string) {
   return timeAgoLabel(seconds);
 }
 
+function subscribeNever() {
+  return () => {};
+}
+
+/** True only once hydrated on the client — used to avoid rendering a server timestamp that would never match the client's during hydration. */
+function useIsClientMounted() {
+  return useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
+}
+
+function capitalizeFirst(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function isSameDate(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/** Builds a Sunday-first month grid (weeks of 7 cells, `null` for padding) for the mini calendar widget. */
+function buildMonthGrid(year: number, monthIndex: number) {
+  const firstWeekday = new Date(year, monthIndex, 1).getDay();
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const cells: Array<number | null> = [
+    ...Array.from({ length: firstWeekday }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, index) => index + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+  const weeks: Array<Array<number | null>> = [];
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+  return weeks;
+}
+
 function downloadCsv(deals: Deal[], filename: string) {
   const rows = [
     [
@@ -187,6 +285,50 @@ function downloadCsv(deals: Deal[], filename: string) {
   anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+/** Reverse of `downloadCsv`'s format: `;`-separated, quoted fields with `""`-escaped quotes. */
+function parseCsv(text: string): string[][] {
+  const content = text.startsWith("﻿") ? text.slice(1) : text;
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (content[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      inQuotes = true;
+    } else if (char === ";") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && content[i + 1] === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += char;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+
+  return rows.filter((cells) => cells.some((cell) => cell.trim() !== ""));
 }
 
 type DealFormValues = {
@@ -976,6 +1118,299 @@ function MonthlyRecordModal({
   );
 }
 
+type DrilldownSortKey = "company" | "month" | "owner" | "stage" | "adjusted";
+
+function DealDrilldownModal({
+  title,
+  deals,
+  onClose,
+}: {
+  title: string;
+  deals: Deal[];
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<DrilldownSortKey>("adjusted");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const normalizedSearch = search.trim().toLowerCase();
+  const filtered = normalizedSearch
+    ? deals.filter(
+        (deal) =>
+          deal.company.toLowerCase().includes(normalizedSearch) ||
+          deal.owner.toLowerCase().includes(normalizedSearch) ||
+          deal.origin.toLowerCase().includes(normalizedSearch),
+      )
+    : deals;
+
+  const sorted = [...filtered].sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    if (sortKey === "adjusted") return (a.adjusted - b.adjusted) * dir;
+    return a[sortKey].localeCompare(b[sortKey], "pt-BR") * dir;
+  });
+
+  function toggleSort(key: DrilldownSortKey) {
+    if (key === sortKey) {
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "adjusted" ? "desc" : "asc");
+    }
+  }
+
+  const total = filtered.reduce((sum, deal) => sum + deal.adjusted, 0);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card modal-card-large" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <h3>{title}</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <p className="drilldown-summary">
+          {filtered.length} negócio(s){filtered.length !== deals.length ? ` de ${deals.length}` : ""} ·{" "}
+          {preciseCurrency.format(total)} em valor ajustado
+        </p>
+        <div className="drilldown-toolbar">
+          <input
+            placeholder="Buscar por empresa, responsável ou origem"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <button
+            type="button"
+            className="table-edit-button"
+            onClick={() => downloadCsv(sorted, "atlas-drilldown.csv")}
+            disabled={sorted.length === 0}
+          >
+            Exportar CSV
+          </button>
+        </div>
+        {sorted.length === 0 ? (
+          <p className="empty-state">Nenhum negócio encontrado para este critério.</p>
+        ) : (
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th className="sortable-header" onClick={() => toggleSort("company")}>
+                    Empresa {sortKey === "company" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="sortable-header" onClick={() => toggleSort("month")}>
+                    Mês {sortKey === "month" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="sortable-header" onClick={() => toggleSort("owner")}>
+                    Responsável {sortKey === "owner" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="sortable-header" onClick={() => toggleSort("stage")}>
+                    Etapa {sortKey === "stage" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="sortable-header" onClick={() => toggleSort("adjusted")}>
+                    Ajustado {sortKey === "adjusted" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((deal) => (
+                  <tr key={deal.id}>
+                    <td>
+                      <strong>{deal.company}</strong>
+                      <small>{deal.id.slice(0, 12)}</small>
+                    </td>
+                    <td>{deal.month}</td>
+                    <td>
+                      <span className="owner-cell">
+                        <i>{initials(deal.owner)}</i>
+                        {deal.owner}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`status-pill ${STAGE_PILL_CLASS[deal.stage]}`}>
+                        {STAGE_LABELS[deal.stage]}
+                      </span>
+                    </td>
+                    <td className="emphasis">{preciseCurrency.format(deal.adjusted)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DailyPromptModal({
+  query,
+  onQueryChange,
+  onSelect,
+  onClose,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  onSelect: (section: Section) => void;
+  onClose: () => void;
+}) {
+  const normalized = query.trim().toLowerCase();
+  const items = navItems.filter((item) => item.label.toLowerCase().includes(normalized));
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        className="modal-card modal-card-daily-prompt"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-heading">
+          <h3>O que você quer olhar hoje?</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <p className="daily-prompt-subtitle">
+          Escolha um atalho ou digite para filtrar.
+        </p>
+        <input
+          type="text"
+          className="daily-prompt-search"
+          placeholder="Buscar seção..."
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          autoFocus
+        />
+        {items.length === 0 ? (
+          <p className="daily-prompt-empty">Nenhuma seção encontrada para “{query}”.</p>
+        ) : (
+          <div className="daily-prompt-grid">
+            {items.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className="daily-prompt-item"
+                onClick={() => onSelect(item.id)}
+              >
+                <span className="daily-prompt-item-icon">{SECTION_ICONS[item.id]}</span>
+                <span className="daily-prompt-item-label">{item.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="daily-prompt-actions">
+          <button type="button" className="modal-cancel" onClick={onClose}>
+            Agora não
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ObjectiveModal({
+  objective,
+  saving,
+  errorMessage,
+  onClose,
+  onSubmit,
+}: {
+  objective: Objective;
+  saving: boolean;
+  errorMessage: string | null;
+  onClose: () => void;
+  onSubmit: (values: {
+    title: string;
+    owner: string;
+    cadence: string;
+    keyResults: ObjectiveKeyResult[];
+  }) => void;
+}) {
+  const [title, setTitle] = useState(objective.title);
+  const [owner, setOwner] = useState(objective.owner);
+  const [cadence, setCadence] = useState(objective.cadence);
+  const [keyResults, setKeyResults] = useState(objective.keyResults);
+
+  function updateKeyResult(index: number, patch: Partial<ObjectiveKeyResult>) {
+    setKeyResults((prev) => prev.map((kr, i) => (i === index ? { ...kr, ...patch } : kr)));
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-heading">
+          <h3>Editar OKR — {objective.id}</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Fechar">
+            ×
+          </button>
+        </div>
+        <form
+          className="modal-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit({ title, owner, cadence, keyResults });
+          }}
+        >
+          <label className="modal-form-notes">
+            <span>Título do objetivo</span>
+            <input value={title} onChange={(event) => setTitle(event.target.value)} required />
+          </label>
+          <label>
+            <span>Responsável</span>
+            <input value={owner} onChange={(event) => setOwner(event.target.value)} required />
+          </label>
+          <label>
+            <span>Cadência</span>
+            <input value={cadence} onChange={(event) => setCadence(event.target.value)} required />
+          </label>
+
+          {keyResults.map((keyResult, index) => (
+            <Fragment key={keyResult.title}>
+              <label>
+                <span>{keyResult.title} — atual</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={keyResult.actual}
+                  onChange={(event) =>
+                    updateKeyResult(index, { actual: Number(event.target.value) })
+                  }
+                  required
+                />
+              </label>
+              <label>
+                <span>{keyResult.title} — meta</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={keyResult.target}
+                  onChange={(event) =>
+                    updateKeyResult(index, { target: Number(event.target.value) })
+                  }
+                  required
+                />
+              </label>
+            </Fragment>
+          ))}
+
+          {errorMessage && <p className="modal-error">{errorMessage}</p>}
+
+          <div className="modal-actions">
+            <div />
+            <div className="modal-actions-right">
+              <button type="button" className="modal-cancel" onClick={onClose}>
+                Cancelar
+              </button>
+              <button type="submit" className="primary-button" disabled={saving}>
+                {saving ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function CommercialControl({
   data,
   user,
@@ -1000,6 +1435,14 @@ export function CommercialControl({
   const [targets, setTargets] = useState<Target[]>(data.targets);
   const [sellers, setSellers] = useState<Seller[]>(data.sellers);
   const [growthTargets, setGrowthTargets] = useState<SellerGrowthTarget[]>(data.growthTargets);
+  const [alertStates, setAlertStates] = useState<AlertState[]>(data.alertStates);
+  const [alertActionKey, setAlertActionKey] = useState<string | null>(null);
+  const [alertJustifications, setAlertJustifications] = useState<Record<string, string>>({});
+  const [drilldown, setDrilldown] = useState<{ title: string; dealIds: string[] } | null>(null);
+  const [auditFilters, setAuditFilters] = useState({ actor: "", action: "", entity: "", from: "", to: "" });
+  const [auditResults, setAuditResults] = useState<ActivityEntry[] | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const [asOf, setAsOf] = useState(data.asOf);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [lastSyncedAt, setLastSyncedAt] = useState(() => Date.now());
@@ -1039,6 +1482,79 @@ export function CommercialControl({
   const [visaoScope, setVisaoScope] = useState<"completa" | "vendedor">("completa");
   const [visaoMonth, setVisaoMonth] = useState<number | "todos">("todos");
 
+  const [dailyPromptOpen, setDailyPromptOpen] = useState(true);
+  const [dailyPromptQuery, setDailyPromptQuery] = useState("");
+  const [showAllActivity, setShowAllActivity] = useState(false);
+  const [showAllQualityIssues, setShowAllQualityIssues] = useState(false);
+  const [showAllBottlenecks, setShowAllBottlenecks] = useState(false);
+  const clockMounted = useIsClientMounted();
+
+  const [integrationSettings, setIntegrationSettings] = useState<IntegrationSettingsView | null>(
+    null,
+  );
+  const [integrationForm, setIntegrationForm] = useState({
+    bitrixWebhookUrl: "",
+    apolloApiKey: "",
+    googleApiKey: "",
+    aiProvider: "auto" as "auto" | "openai" | "anthropic",
+    openaiApiKey: "",
+    anthropicApiKey: "",
+  });
+  const [integrationSaving, setIntegrationSaving] = useState(false);
+  const [integrationError, setIntegrationError] = useState<string | null>(null);
+
+  const [bitrixImportItems, setBitrixImportItems] = useState<BitrixImportItem[] | null>(null);
+  const [bitrixImportSelected, setBitrixImportSelected] = useState<Set<string>>(new Set());
+  const [bitrixImportLoading, setBitrixImportLoading] = useState(false);
+  const [bitrixImportError, setBitrixImportError] = useState<string | null>(null);
+  const [bitrixImportConfirming, setBitrixImportConfirming] = useState(false);
+  const [bitrixExporting, setBitrixExporting] = useState(false);
+  const [bitrixExportError, setBitrixExportError] = useState<string | null>(null);
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvImportError, setCsvImportError] = useState<string | null>(null);
+
+  const [leadQuery, setLeadQuery] = useState({ company: "", domain: "", email: "" });
+  const [leadResult, setLeadResult] = useState<EnrichedLead | null>(null);
+  const [leadLoading, setLeadLoading] = useState<"apollo" | "google" | null>(null);
+  const [leadError, setLeadError] = useState<string | null>(null);
+  const [leadPrefill, setLeadPrefill] = useState<Partial<DealFormValues> | null>(null);
+
+  const [aiReportOpen, setAiReportOpen] = useState(false);
+  const [aiReportLoading, setAiReportLoading] = useState(false);
+  const [aiReportError, setAiReportError] = useState<string | null>(null);
+  const [aiReportText, setAiReportText] = useState("");
+
+  const [objectives, setObjectives] = useState<Objective[]>(data.objectives);
+  const [objectiveModal, setObjectiveModal] = useState<Objective | null>(null);
+  const [objectiveModalSaving, setObjectiveModalSaving] = useState(false);
+  const [objectiveModalError, setObjectiveModalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (section !== "integracoes" || integrationSettings) return;
+    let cancelled = false;
+    fetch("/api/integrations/settings", { cache: "no-store" })
+      .then(async (res) => {
+        const json = (await res.json()) as IntegrationSettingsView & { error?: string };
+        if (!res.ok) throw new Error(json.error ?? "Falha ao carregar configurações.");
+        return json;
+      })
+      .then((json) => {
+        if (cancelled) return;
+        setIntegrationSettings(json);
+        setIntegrationForm((prev) => ({ ...prev, aiProvider: json.aiProvider }));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setIntegrationError(
+            error instanceof Error ? error.message : "Falha ao carregar configurações.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [section, integrationSettings]);
+
   useEffect(() => {
     if (!toast) return;
     const id = setTimeout(() => setToast(null), 4000);
@@ -1050,18 +1566,20 @@ export function CommercialControl({
     return () => clearInterval(id);
   }, []);
 
+
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
 
     async function poll() {
       try {
-        const [dealsRes, activityRes, sellersRes, actionItemsRes, growthPlanRes] = await Promise.all([
+        const [dealsRes, activityRes, sellersRes, actionItemsRes, growthPlanRes, alertsRes] = await Promise.all([
           fetch("/api/deals", { cache: "no-store", signal: controller.signal }),
           fetch("/api/activity?limit=20", { cache: "no-store", signal: controller.signal }),
           fetch("/api/sellers", { cache: "no-store", signal: controller.signal }),
           fetch("/api/action-items", { cache: "no-store", signal: controller.signal }),
           fetch("/api/growth-plan", { cache: "no-store", signal: controller.signal }),
+          fetch("/api/alerts", { cache: "no-store", signal: controller.signal }),
         ]);
         if (!dealsRes.ok) throw new Error("sync failed");
         const dealsJson = (await dealsRes.json()) as { deals: Deal[]; targets: Target[] };
@@ -1096,6 +1614,10 @@ export function CommercialControl({
             growthTargets: SellerGrowthTarget[];
           };
           if (!cancelled) setGrowthTargets(growthPlanJson.growthTargets);
+        }
+        if (alertsRes.ok) {
+          const alertsJson = (await alertsRes.json()) as { alertStates: AlertState[] };
+          if (!cancelled) setAlertStates(alertsJson.alertStates);
         }
       } catch (error) {
         if (!cancelled && (error as Error).name !== "AbortError") {
@@ -1147,6 +1669,118 @@ export function CommercialControl({
     [deals, monthlyMetrics, data.historicalDeals, ownerPerformance, asOf],
   );
 
+  const revenueClassification = useMemo(
+    () => classifyRevenue(deals, { asOf, ownerPerformance }),
+    [deals, asOf, ownerPerformance],
+  );
+
+  const forecastScenarios = useMemo(
+    () =>
+      computeForecastScenarios({
+        deals,
+        targets,
+        asOf,
+        ownerPerformance,
+        averageSalesCycle: executiveSummary.averageSalesCycle,
+        monthsOfHistory: monthlyMetrics.filter((m) => m.sold > 0).length,
+      }),
+    [deals, targets, asOf, ownerPerformance, executiveSummary.averageSalesCycle, monthlyMetrics],
+  );
+
+  const healthScore = useMemo(
+    () =>
+      computeSalesHealthScore({
+        deals,
+        monthlyMetrics,
+        executiveSummary,
+        dataQualityIssues: data.dataQualityIssues,
+        pipelineOpenTotal: revenueClassification.pipelineAberto.total,
+        gapToTarget: forecastScenarios.gapToTarget,
+        asOf,
+      }),
+    [deals, monthlyMetrics, executiveSummary, data.dataQualityIssues, revenueClassification, forecastScenarios.gapToTarget, asOf],
+  );
+
+  const alerts = useMemo(
+    () =>
+      computeAlerts({
+        deals,
+        monthlyMetrics,
+        ownerPerformance,
+        sellerGrowthTargets: growthTargets,
+        dataQualityIssues: data.dataQualityIssues,
+        revenueClassification,
+        asOf,
+      }),
+    [deals, monthlyMetrics, ownerPerformance, growthTargets, data.dataQualityIssues, revenueClassification, asOf],
+  );
+
+  const alertStateByKey = useMemo(
+    () => new Map(alertStates.map((state) => [state.key, state])),
+    [alertStates],
+  );
+
+  const dealsById = useMemo(() => new Map(deals.map((deal) => [deal.id, deal])), [deals]);
+
+  const sellerScores = useMemo(
+    () =>
+      new Map(
+        owners.map((owner) => [
+          owner,
+          computeSellerPerformanceScore({
+            owner,
+            deals,
+            ownerPerformance,
+            growthTargets,
+            companyAverageCycle: executiveSummary.averageSalesCycle,
+            asOf,
+          }),
+        ]),
+      ),
+    [owners, deals, ownerPerformance, growthTargets, executiveSummary.averageSalesCycle, asOf],
+  );
+
+  const dataQualityMetrics = useMemo(() => {
+    const total = deals.length;
+    const missingOrigin = deals.filter((d) => !d.origin);
+    const missingProposalDate = deals.filter((d) => !d.proposalAcceptedAt);
+    const missingSignatureDate = deals.filter((d) => !d.contractSignedAt);
+    const missingBillingStatus = deals.filter(
+      (d) => !d.billingStatus || d.billingStatus.trim().toLowerCase() === "sem status",
+    );
+    const ratio = (count: number) => (total > 0 ? count / total : 0);
+    return [
+      {
+        key: "origin",
+        label: "Sem origem classificada",
+        count: missingOrigin.length,
+        ratio: ratio(missingOrigin.length),
+        dealIds: missingOrigin.map((d) => d.id),
+      },
+      {
+        key: "proposalDate",
+        label: "Sem data de proposta",
+        count: missingProposalDate.length,
+        ratio: ratio(missingProposalDate.length),
+        dealIds: missingProposalDate.map((d) => d.id),
+      },
+      {
+        key: "signatureDate",
+        label: "Sem data de assinatura",
+        count: missingSignatureDate.length,
+        ratio: ratio(missingSignatureDate.length),
+        dealIds: missingSignatureDate.map((d) => d.id),
+      },
+      {
+        key: "billingStatus",
+        label: "Sem status de faturamento",
+        count: missingBillingStatus.length,
+        ratio: ratio(missingBillingStatus.length),
+        dealIds: missingBillingStatus.map((d) => d.id),
+      },
+    ];
+  }, [deals]);
+
   const actionItemsByHorizon = useMemo(() => {
     const grouped: Record<ActionHorizon, ActionItem[]> = { h0: [], h1: [], h2: [], h3: [] };
     for (const item of actionItems) grouped[item.horizon].push(item);
@@ -1163,6 +1797,83 @@ export function CommercialControl({
 
   function showToast(tone: "success" | "error", message: string) {
     setToast({ tone, message });
+  }
+
+  async function setAlertStatus(
+    key: string,
+    status: AlertState["status"],
+    justification: string | null,
+  ) {
+    setAlertActionKey(key);
+    try {
+      const res = await fetch(`/api/alerts/${encodeURIComponent(key)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, justification }),
+      });
+      const json = (await res.json()) as { alertState?: AlertState; error?: string };
+      if (!res.ok || !json.alertState) throw new Error(json.error ?? "Erro ao atualizar alerta");
+      setAlertStates((prev) => [json.alertState!, ...prev.filter((s) => s.key !== key)]);
+      showToast(
+        "success",
+        status === "dispensado" ? "Alerta dispensado." : status === "resolvido" ? "Alerta marcado como resolvido." : "Alerta reaberto.",
+      );
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Erro ao atualizar alerta");
+    } finally {
+      setAlertActionKey(null);
+    }
+  }
+
+  async function applyAuditFilters() {
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      const params = new URLSearchParams({ limit: "200" });
+      if (auditFilters.actor.trim()) params.set("actor", auditFilters.actor.trim());
+      if (auditFilters.action) params.set("action", auditFilters.action);
+      if (auditFilters.entity.trim()) params.set("entity", auditFilters.entity.trim());
+      if (auditFilters.from) params.set("from", auditFilters.from);
+      if (auditFilters.to) params.set("to", `${auditFilters.to}T23:59:59.999Z`);
+      const res = await fetch(`/api/activity?${params.toString()}`, { cache: "no-store" });
+      const json = (await res.json()) as { activity?: ActivityEntry[]; error?: string };
+      if (!res.ok || !json.activity) throw new Error(json.error ?? "Erro ao filtrar auditoria");
+      setAuditResults(json.activity);
+    } catch (error) {
+      setAuditError(error instanceof Error ? error.message : "Erro ao filtrar auditoria");
+    } finally {
+      setAuditLoading(false);
+    }
+  }
+
+  function clearAuditFilters() {
+    setAuditFilters({ actor: "", action: "", entity: "", from: "", to: "" });
+    setAuditResults(null);
+    setAuditError(null);
+  }
+
+  function downloadActivityCsv(entries: ActivityEntry[], filename: string) {
+    const rows = [
+      ["Data", "Usuário", "Ação", "Entidade", "ID da entidade", "Detalhes"],
+      ...entries.map((entry) => [
+        entry.createdAt,
+        entry.actorEmail,
+        ACTION_LABELS[entry.action] ?? entry.action,
+        entry.entity,
+        entry.entityId ?? "",
+        entry.detailJson,
+      ]),
+    ];
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   async function createDeal(values: DealFormValues) {
@@ -1548,6 +2259,263 @@ export function CommercialControl({
     });
   }
 
+  async function saveIntegrationSettings() {
+    setIntegrationSaving(true);
+    setIntegrationError(null);
+    try {
+      const res = await fetch("/api/integrations/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(integrationForm),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? "Falha ao salvar configurações.");
+
+      const refreshedRes = await fetch("/api/integrations/settings", { cache: "no-store" });
+      const refreshed = (await refreshedRes.json()) as IntegrationSettingsView;
+      setIntegrationSettings(refreshed);
+      setIntegrationForm({
+        bitrixWebhookUrl: "",
+        apolloApiKey: "",
+        googleApiKey: "",
+        aiProvider: refreshed.aiProvider,
+        openaiApiKey: "",
+        anthropicApiKey: "",
+      });
+      showToast("success", "Configurações de integração salvas.");
+    } catch (error) {
+      setIntegrationError(
+        error instanceof Error ? error.message : "Falha ao salvar configurações.",
+      );
+    } finally {
+      setIntegrationSaving(false);
+    }
+  }
+
+  async function runBitrixImport() {
+    setBitrixImportLoading(true);
+    setBitrixImportError(null);
+    try {
+      const res = await fetch("/api/integrations/bitrix/import", { method: "POST" });
+      const json = (await res.json()) as { items?: BitrixImportItem[]; error?: string };
+      if (!res.ok || !json.items) throw new Error(json.error ?? "Falha ao importar do Bitrix24.");
+      setBitrixImportItems(json.items);
+      setBitrixImportSelected(new Set(json.items.map((item) => item.bitrixId)));
+    } catch (error) {
+      setBitrixImportError(
+        error instanceof Error ? error.message : "Falha ao importar do Bitrix24.",
+      );
+    } finally {
+      setBitrixImportLoading(false);
+    }
+  }
+
+  function toggleBitrixImportSelection(bitrixId: string) {
+    setBitrixImportSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(bitrixId)) next.delete(bitrixId);
+      else next.add(bitrixId);
+      return next;
+    });
+  }
+
+  async function confirmBitrixImport() {
+    if (!bitrixImportItems) return;
+    setBitrixImportConfirming(true);
+    setBitrixImportError(null);
+    try {
+      const items = bitrixImportItems.filter((item) => bitrixImportSelected.has(item.bitrixId));
+      const res = await fetch("/api/integrations/bitrix/import/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      const json = (await res.json()) as { imported?: number; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Falha ao confirmar importação.");
+      showToast("success", `${json.imported ?? 0} negócio(s) importado(s) do Bitrix24.`);
+      setBitrixImportItems(null);
+      setBitrixImportSelected(new Set());
+
+      const dealsRes = await fetch("/api/deals", { cache: "no-store" });
+      if (dealsRes.ok) {
+        const dealsJson = (await dealsRes.json()) as { deals: Deal[]; targets: Target[] };
+        setDeals(dealsJson.deals);
+        setTargets(dealsJson.targets);
+      }
+    } catch (error) {
+      setBitrixImportError(
+        error instanceof Error ? error.message : "Falha ao confirmar importação.",
+      );
+    } finally {
+      setBitrixImportConfirming(false);
+    }
+  }
+
+  async function runBitrixExport() {
+    setBitrixExporting(true);
+    setBitrixExportError(null);
+    try {
+      const res = await fetch("/api/integrations/bitrix/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dealIds: deals.map((deal) => deal.id) }),
+      });
+      const json = (await res.json()) as {
+        created?: number;
+        updated?: number;
+        failed?: number;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error ?? "Falha ao exportar para o Bitrix24.");
+      showToast(
+        "success",
+        `Exportado: ${json.created ?? 0} criado(s), ${json.updated ?? 0} atualizado(s)${
+          json.failed ? `, ${json.failed} falha(s)` : ""
+        }.`,
+      );
+    } catch (error) {
+      setBitrixExportError(
+        error instanceof Error ? error.message : "Falha ao exportar para o Bitrix24.",
+      );
+    } finally {
+      setBitrixExporting(false);
+    }
+  }
+
+  async function handleCsvImport(file: File) {
+    setCsvImporting(true);
+    setCsvImportError(null);
+    try {
+      const text = await file.text();
+      const rows = parseCsv(text);
+      const [, ...dataRows] = rows;
+      let imported = 0;
+      for (const cols of dataRows) {
+        const [month, company, owner, origin, stageLabel, sold, adjusted, billed] = cols;
+        if (!company || !owner) continue;
+        const monthNumber = MONTH_NAMES.indexOf(month) + 1 || new Date().getMonth() + 1;
+        const stageEntry = STAGES.find((stage) => STAGE_LABELS[stage] === stageLabel);
+        const res = await fetch("/api/deals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            company,
+            owner,
+            origin: origin || "",
+            monthNumber,
+            stage: stageEntry ?? "aberto",
+            sold: Number(sold) || 0,
+            adjusted: Number(adjusted) || Number(sold) || 0,
+            billed: Number(billed) || 0,
+          }),
+        });
+        if (res.ok) imported += 1;
+      }
+      showToast("success", `${imported} negócio(s) importado(s) do CSV.`);
+
+      const dealsRes = await fetch("/api/deals", { cache: "no-store" });
+      if (dealsRes.ok) {
+        const dealsJson = (await dealsRes.json()) as { deals: Deal[]; targets: Target[] };
+        setDeals(dealsJson.deals);
+        setTargets(dealsJson.targets);
+      }
+    } catch (error) {
+      setCsvImportError(error instanceof Error ? error.message : "Falha ao importar CSV.");
+    } finally {
+      setCsvImporting(false);
+    }
+  }
+
+  async function runLeadSearch(provider: "apollo" | "google") {
+    setLeadLoading(provider);
+    setLeadError(null);
+    setLeadResult(null);
+    try {
+      const res = await fetch("/api/leads/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          query: {
+            email: leadQuery.email || undefined,
+            company: leadQuery.company || undefined,
+            domain: leadQuery.domain || undefined,
+          },
+        }),
+      });
+      const json = (await res.json()) as { lead?: EnrichedLead; error?: string };
+      if (!res.ok || !json.lead) throw new Error(json.error ?? "Não foi possível enriquecer o lead.");
+      setLeadResult(json.lead);
+    } catch (error) {
+      setLeadError(error instanceof Error ? error.message : "Não foi possível enriquecer o lead.");
+    } finally {
+      setLeadLoading(null);
+    }
+  }
+
+  function openDealModalFromLead(lead: EnrichedLead) {
+    setLeadPrefill({
+      company: lead.company ?? "",
+      notes: [lead.name, lead.title, lead.email, lead.phone, lead.address, lead.website]
+        .filter(Boolean)
+        .join(" · "),
+    });
+    setDealModal({ mode: "create" });
+  }
+
+  async function generateAiReport() {
+    setAiReportOpen(true);
+    setAiReportLoading(true);
+    setAiReportError(null);
+    setAiReportText("");
+    try {
+      const context = {
+        executiveSummary,
+        healthScore,
+        activeAlerts: alerts,
+        sellerScores: Object.fromEntries(sellerScores),
+      };
+      const res = await fetch("/api/ai/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ context }),
+      });
+      const json = (await res.json()) as { report?: string; error?: string };
+      if (!res.ok || !json.report) throw new Error(json.error ?? "Falha ao gerar relatório.");
+      setAiReportText(json.report);
+    } catch (error) {
+      setAiReportError(error instanceof Error ? error.message : "Falha ao gerar relatório.");
+    } finally {
+      setAiReportLoading(false);
+    }
+  }
+
+  function handleObjectiveSubmit(
+    objective: Objective,
+    values: { title: string; owner: string; cadence: string; keyResults: ObjectiveKeyResult[] },
+  ) {
+    setObjectiveModalSaving(true);
+    setObjectiveModalError(null);
+    fetch(`/api/objectives/${objective.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(values),
+    })
+      .then(async (res) => {
+        const json = (await res.json()) as { objective?: Objective; error?: string };
+        if (!res.ok || !json.objective) throw new Error(json.error ?? "Falha ao atualizar OKR.");
+        setObjectives((prev) =>
+          prev.map((item) => (item.id === objective.id ? json.objective! : item)),
+        );
+        setObjectiveModal(null);
+        showToast("success", "OKR atualizado.");
+      })
+      .catch((error) => {
+        setObjectiveModalError(error instanceof Error ? error.message : "Falha ao atualizar OKR.");
+      })
+      .finally(() => setObjectiveModalSaving(false));
+  }
+
   const filteredDeals = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("pt-BR");
     return deals.filter((deal) => {
@@ -1697,7 +2665,30 @@ export function CommercialControl({
     const criticalCount =
       dashboardInsights.internalBottlenecks.filter((item) => item.severity === "alta").length +
       dashboardInsights.internalBottlenecks.filter((item) => item.severity === "média").length;
+
+    const today = new Date(now);
+    // Real time is only rendered after mount: an SSR-rendered clock would show the
+    // server's timestamp, which never matches the client's on hydration.
+    const clockTime = clockMounted ? today.toLocaleTimeString("pt-BR") : "--:--:--";
+    const clockDateLabel = clockMounted
+      ? capitalizeFirst(
+          today.toLocaleDateString("pt-BR", {
+            weekday: "long",
+            day: "2-digit",
+            month: "long",
+            year: "numeric",
+          }),
+        )
+      : "";
+    const monthWeeks = buildMonthGrid(today.getFullYear(), today.getMonth());
+    const calendarMonthLabel = capitalizeFirst(
+      today.toLocaleDateString("pt-BR", { month: "long", year: "numeric" }),
+    );
+    const asOfDate = new Date(asOf);
+    const asOfIsToday = isSameDate(asOfDate, today);
+
     return (
+      <>
       <div className="cover-screen">
         <div className="cover-hero">
           <img src="/atlas-logo.png" alt="Atlas" className="cover-logo" />
@@ -1707,6 +2698,53 @@ export function CommercialControl({
             Escolha como quer entrar: um Dashboard analítico com comparação anual e plano de
             ação, ou a Visão completa da operação para navegar por negócios, equipe e governança.
           </p>
+        </div>
+        <div className="cover-widgets">
+          <div className="cover-widget cover-widget-clock">
+            <span className="cover-widget-label">Agora</span>
+            <strong className="cover-widget-time">{clockTime}</strong>
+            <span className="cover-widget-date">{clockDateLabel}</span>
+          </div>
+          <div className="cover-widget cover-widget-calendar">
+            <div className="cover-widget-calendar-heading">
+              <span className="cover-widget-label">{calendarMonthLabel}</span>
+            </div>
+            <div className="cover-widget-calendar-grid">
+              {WEEKDAY_LABELS.map((label, index) => (
+                <span key={`${label}-${index}`} className="cover-widget-calendar-weekday">
+                  {label}
+                </span>
+              ))}
+              {monthWeeks.flatMap((week, weekIndex) =>
+                week.map((day, dayIndex) => {
+                  if (day === null) {
+                    return (
+                      <span
+                        key={`${weekIndex}-${dayIndex}`}
+                        className="cover-widget-calendar-cell empty"
+                      />
+                    );
+                  }
+                  const cellDate = new Date(today.getFullYear(), today.getMonth(), day);
+                  const isToday = isSameDate(cellDate, today);
+                  const isAsOf = !isToday && isSameDate(cellDate, asOfDate);
+                  return (
+                    <span
+                      key={`${weekIndex}-${dayIndex}`}
+                      className={`cover-widget-calendar-cell${isToday ? " today" : ""}${isAsOf ? " as-of" : ""}`}
+                    >
+                      {day}
+                    </span>
+                  );
+                }),
+              )}
+            </div>
+            <span className="cover-widget-calendar-caption">
+              {asOfIsToday
+                ? "Dados atualizados hoje"
+                : `Dados atualizados até ${asOfDate.toLocaleDateString("pt-BR")}`}
+            </span>
+          </div>
         </div>
         <div className="cover-cards">
           <button type="button" className="cover-card" onClick={() => setSection("dashboard")}>
@@ -1762,6 +2800,18 @@ export function CommercialControl({
           {user.isPreview ? "Acesso público temporário" : `Conectado como ${user.email}`}
         </div>
       </div>
+      {dailyPromptOpen && (
+        <DailyPromptModal
+          query={dailyPromptQuery}
+          onQueryChange={setDailyPromptQuery}
+          onSelect={(nextSection) => {
+            setDailyPromptOpen(false);
+            setSection(nextSection);
+          }}
+          onClose={() => setDailyPromptOpen(false)}
+        />
+      )}
+      </>
     );
   }
 
@@ -1771,7 +2821,11 @@ export function CommercialControl({
         <button
           type="button"
           className="brand-lockup"
-          onClick={() => setSection("capa")}
+          onClick={() => {
+            setSection("capa");
+            setDailyPromptOpen(true);
+            setDailyPromptQuery("");
+          }}
           title="Voltar à capa"
         >
           <img src="/atlas-logo.png" alt="Atlas" className="brand-logo" />
@@ -2024,13 +3078,27 @@ export function CommercialControl({
                   {dashboardInsights.internalBottlenecks.length === 0 && (
                     <p className="activity-empty">Nenhum gargalo identificado no momento.</p>
                   )}
-                  {dashboardInsights.internalBottlenecks.map((item) => (
+                  {(showAllBottlenecks
+                    ? dashboardInsights.internalBottlenecks
+                    : dashboardInsights.internalBottlenecks.slice(0, 5)
+                  ).map((item) => (
                     <div key={item.label} className={`bottleneck-item severity-${item.severity}`}>
                       <strong>{item.label}</strong>
                       <p>{item.detail}</p>
                     </div>
                   ))}
                 </div>
+                {dashboardInsights.internalBottlenecks.length > 5 && (
+                  <button
+                    type="button"
+                    className="list-toggle"
+                    onClick={() => setShowAllBottlenecks((prev) => !prev)}
+                  >
+                    {showAllBottlenecks
+                      ? "Ver menos"
+                      : `Ver mais (${dashboardInsights.internalBottlenecks.length - 5})`}
+                  </button>
+                )}
               </article>
 
               <article className="panel">
@@ -2081,12 +3149,16 @@ export function CommercialControl({
                       <p>{item.detail}</p>
                     </div>
                   ))}
-                  {BITRIX_AUDIT_REFERENCE.pioresEtapas.map((item) => (
-                    <div key={`${item.pipeline}-${item.etapa}`} className="bottleneck-item severity-média">
-                      <strong>{item.pipeline} — {item.dias.toFixed(1).replace(".", ",")}d parado</strong>
-                      <p>Pior etapa observada: &quot;{item.etapa}&quot;.</p>
-                    </div>
-                  ))}
+                  {BITRIX_AUDIT_REFERENCE.pipelines
+                    .filter((pipeline) => pipeline.piorEtapaDias !== null)
+                    .map((pipeline) => (
+                      <div key={pipeline.nome} className="bottleneck-item severity-média">
+                        <strong>
+                          {pipeline.nome} — {pipeline.piorEtapaDias!.toFixed(1).replace(".", ",")}d parado
+                        </strong>
+                        <p>Pior etapa observada: &quot;{pipeline.piorEtapa}&quot;.</p>
+                      </div>
+                    ))}
                   {BITRIX_AUDIT_REFERENCE.concentracao.map((item) => (
                     <div key={item.owner} className="bottleneck-item severity-baixa">
                       <strong>{item.owner} — {item.value}</strong>
@@ -2151,6 +3223,240 @@ export function CommercialControl({
                   ))}
                 </div>
               ))}
+            </article>
+          </section>
+        )}
+
+        {section === "inteligencia" && (
+          <section className="page-content">
+            <div className="page-intro">
+              <div>
+                <span className="section-kicker">Revenue Intelligence</span>
+                <h2>Previsão de receita explicável, não decorativa.</h2>
+                <p>
+                  Forecast, classificação de receita, saúde da operação e alertas — todos
+                  calculados a partir dos negócios reais em {forecastScenarios.monthName}, com a
+                  fórmula e a fonte de cada número visíveis, não uma caixa-preta.
+                </p>
+              </div>
+              <span className={`confidence-badge confidence-${forecastScenarios.confidence.level}`}>
+                Confiança da previsão: {forecastScenarios.confidence.level}
+              </span>
+            </div>
+            {forecastScenarios.confidence.reasons.length > 0 && (
+              <p className="dashboard-note">
+                Por quê: {forecastScenarios.confidence.reasons.join(" ")}
+              </p>
+            )}
+
+            <div className="kpi-grid">
+              <article className="kpi-card">
+                <span>Meta de {forecastScenarios.monthName}</span>
+                <strong>{currency.format(forecastScenarios.target)}</strong>
+                <small>meta oficial do mês</small>
+              </article>
+              <article className="kpi-card">
+                <span>Realizado + comprometido (Commit)</span>
+                <strong>{currency.format(forecastScenarios.commitScenario)}</strong>
+                <small>pago + ganho/faturado — alta certeza</small>
+              </article>
+              <article
+                className="kpi-card clickable-row"
+                onClick={() =>
+                  setDrilldown({
+                    title: "Pipeline aberto do mês",
+                    dealIds: deals
+                      .filter((d) => d.monthNumber === forecastScenarios.monthNumber && d.stage === "aberto")
+                      .map((d) => d.id),
+                  })
+                }
+              >
+                <span>Pipeline aberto (Best Case)</span>
+                <strong>{currency.format(forecastScenarios.bestCaseScenario)}</strong>
+                <small>{currency.format(forecastScenarios.pipelineOpen)} em aberto — clique para ver</small>
+              </article>
+              <article className="kpi-card accent">
+                <span>Forecast ponderado (AI)</span>
+                <strong>{currency.format(forecastScenarios.aiForecastScenario)}</strong>
+                <small>
+                  Σ valor × probabilidade dinâmica ={" "}
+                  {currency.format(forecastScenarios.weightedPipelineOpen)} de pipeline ponderado
+                </small>
+              </article>
+              <article className="kpi-card">
+                <span>Gap para a meta</span>
+                <strong className={forecastScenarios.gapToTarget > 0 ? "negative-delta" : "positive-delta"}>
+                  {currency.format(Math.abs(forecastScenarios.gapToTarget))}
+                  {forecastScenarios.gapToTarget > 0 ? " faltando" : " superado"}
+                </strong>
+                <small>
+                  {forecastScenarios.gapToTarget > 0
+                    ? `${currency.format(forecastScenarios.dailyTargetNeeded)}/dia necessário (${forecastScenarios.daysRemainingInMonth} dia(s) restantes)`
+                    : "Meta já coberta pelo forecast ponderado"}
+                </small>
+              </article>
+              <article className="kpi-card">
+                <span>Aderência projetada</span>
+                <strong>
+                  {forecastScenarios.projectedAttainment === null
+                    ? "Sem meta definida"
+                    : percent.format(forecastScenarios.projectedAttainment)}
+                </strong>
+                <small>forecast ponderado ÷ meta — estimativa determinística, não estatística</small>
+              </article>
+            </div>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Classificação de receita</span>
+                  <h3>Onde está cada real, por etapa do funil</h3>
+                </div>
+              </div>
+              <div className="revenue-classification-grid">
+                {(
+                  [
+                    { key: "realizada", label: "Realizada (pago)", data: revenueClassification.realizada },
+                    { key: "comprometida", label: "Comprometida (ganho/faturado)", data: revenueClassification.comprometida },
+                    { key: "pipelineAberto", label: "Pipeline aberto", data: revenueClassification.pipelineAberto },
+                    { key: "emRisco", label: "Em risco", data: revenueClassification.emRisco },
+                  ] as const
+                ).map((row) => (
+                  <button
+                    type="button"
+                    key={row.key}
+                    className={`revenue-class-card revenue-class-${row.key}`}
+                    onClick={() =>
+                      setDrilldown({ title: row.label, dealIds: [...row.data.dealIds] })
+                    }
+                  >
+                    <span>{row.label}</span>
+                    <strong>{currency.format(row.data.total)}</strong>
+                    <small>{row.data.dealIds.length} negócio(s) · clique para detalhar</small>
+                  </button>
+                ))}
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Sales Health Score</span>
+                  <h3>
+                    {healthScore.overall}/100 ·{" "}
+                    <span className={`health-badge health-${healthScore.band}`}>{healthScore.band}</span>
+                  </h3>
+                </div>
+              </div>
+              <div className="health-dimension-grid">
+                {healthScore.dimensions.map((dimension) => (
+                  <div
+                    key={dimension.key}
+                    className={dimension.dealIds?.length ? "health-dimension clickable-row" : "health-dimension"}
+                    onClick={
+                      dimension.dealIds?.length
+                        ? () => setDrilldown({ title: dimension.label, dealIds: dimension.dealIds! })
+                        : undefined
+                    }
+                  >
+                    <div className="health-dimension-head">
+                      <span>{dimension.label}</span>
+                      <strong>{dimension.score}</strong>
+                    </div>
+                    <i className="health-dimension-bar">
+                      <b style={{ width: `${Math.min(dimension.score, 100)}%` }} />
+                    </i>
+                    <small>{dimension.detail}</small>
+                    <small className="health-dimension-formula">Peso {dimension.weight}% · {dimension.formula}</small>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Alertas inteligentes</span>
+                  <h3>{alerts.length} alerta(s) detectado(s) por regra, não decorativos</h3>
+                </div>
+              </div>
+              {alerts.length === 0 ? (
+                <p className="empty-state">Nenhum alerta no momento.</p>
+              ) : (
+                <div className="alert-list">
+                  {alerts.map((alert) => {
+                    const state = alertStateByKey.get(alert.key);
+                    const status = state?.status ?? "aberto";
+                    return (
+                      <article key={alert.key} className={`alert-card severity-${alert.severity} status-${status}`}>
+                        <div className="alert-card-head">
+                          <span className={`severity-pill severity-${alert.severity}`}>
+                            {alert.severity.replace("_", " ")}
+                          </span>
+                          <strong>{alert.title}</strong>
+                          {status !== "aberto" && <span className="alert-status-pill">{status}</span>}
+                        </div>
+                        <p>{alert.description}</p>
+                        {alert.financialImpact !== null && (
+                          <small>Impacto financeiro: {currency.format(alert.financialImpact)}</small>
+                        )}
+                        <small className="alert-recommendation">Recomendação: {alert.recommendation}</small>
+                        <div className="alert-actions">
+                          {alert.evidenceDealIds.length > 0 && (
+                            <button
+                              type="button"
+                              className="table-edit-button"
+                              onClick={() => setDrilldown({ title: alert.title, dealIds: alert.evidenceDealIds })}
+                            >
+                              Ver negócios ({alert.evidenceDealIds.length})
+                            </button>
+                          )}
+                          {!isReadOnly && status === "aberto" && (
+                            <>
+                              <input
+                                className="alert-justification-input"
+                                placeholder="Justificativa para dispensar"
+                                value={alertJustifications[alert.key] ?? ""}
+                                onChange={(event) =>
+                                  setAlertJustifications((prev) => ({ ...prev, [alert.key]: event.target.value }))
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="modal-cancel"
+                                disabled={alertActionKey === alert.key}
+                                onClick={() =>
+                                  void setAlertStatus(alert.key, "dispensado", alertJustifications[alert.key] ?? "")
+                                }
+                              >
+                                Dispensar
+                              </button>
+                              <button
+                                type="button"
+                                className="primary-button"
+                                disabled={alertActionKey === alert.key}
+                                onClick={() => void setAlertStatus(alert.key, "resolvido", null)}
+                              >
+                                Marcar resolvido
+                              </button>
+                            </>
+                          )}
+                          {!isReadOnly && status !== "aberto" && (
+                            <button
+                              type="button"
+                              className="table-edit-button"
+                              disabled={alertActionKey === alert.key}
+                              onClick={() => void setAlertStatus(alert.key, "aberto", null)}
+                            >
+                              Reabrir
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </article>
           </section>
         )}
@@ -2858,13 +4164,22 @@ export function CommercialControl({
             </div>
 
             <div className="okr-grid">
-              {data.objectives.map((objective) => (
+              {objectives.map((objective) => (
                 <article className="okr-card" key={objective.id}>
                   <div className="okr-head">
                     <span>{objective.id}</span>
                     <i>{healthLabel(objective.progress)}</i>
                   </div>
                   <h3>{objective.title}</h3>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      className="list-toggle okr-edit-button"
+                      onClick={() => setObjectiveModal(objective)}
+                    >
+                      Editar
+                    </button>
+                  )}
                   <div className="okr-owner">
                     <span>{initials(objective.owner)}</span>
                     <div>
@@ -3069,6 +4384,48 @@ export function CommercialControl({
                 <small>Canal mais frequente</small>
               </article>
             </div>
+
+            {(() => {
+              const score = sellerScores.get(selectedOwner);
+              if (!score) return null;
+              return (
+                <article className="panel seller-score-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="section-kicker">Sales Performance Score</span>
+                      <h3>{score.overall}/100 · {selectedOwner}</h3>
+                    </div>
+                  </div>
+                  <div className="health-dimension-grid">
+                    {score.dimensions.map((dimension) =>
+                      dimension.available ? (
+                        <div key={dimension.key} className="health-dimension">
+                          <div className="health-dimension-head">
+                            <span>{dimension.label}</span>
+                            <strong>{dimension.score}</strong>
+                          </div>
+                          <i className="health-dimension-bar">
+                            <b style={{ width: `${Math.min(dimension.score, 100)}%` }} />
+                          </i>
+                          <small>{dimension.detail}</small>
+                          <small className="health-dimension-formula">
+                            Peso {dimension.weight}% · {dimension.formula}
+                          </small>
+                        </div>
+                      ) : (
+                        <div key={dimension.key} className="health-dimension health-dimension-unavailable">
+                          <div className="health-dimension-head">
+                            <span>{dimension.label}</span>
+                            <strong>—</strong>
+                          </div>
+                          <small>{dimension.missingDataNote}</small>
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </article>
+              );
+            })()}
 
             <div className="seller-detail-grid">
               <article className="panel seller-month-panel">
@@ -3341,13 +4698,62 @@ export function CommercialControl({
                   <span className="section-kicker">Trilha de auditoria</span>
                   <h3>Atividade recente</h3>
                 </div>
-                <span>{activity.length} eventos</span>
+                <span>{(auditResults ?? activity).length} eventos{auditResults ? " (filtrado)" : ""}</span>
               </div>
+
+              <div className="audit-filter-row">
+                <input
+                  placeholder="Usuário (e-mail)"
+                  value={auditFilters.actor}
+                  onChange={(event) => setAuditFilters((prev) => ({ ...prev, actor: event.target.value }))}
+                />
+                <select
+                  value={auditFilters.action}
+                  onChange={(event) => setAuditFilters((prev) => ({ ...prev, action: event.target.value }))}
+                >
+                  <option value="">Todas as ações</option>
+                  {Object.entries(ACTION_LABELS).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  placeholder="Entidade (ex.: commercial_deal)"
+                  value={auditFilters.entity}
+                  onChange={(event) => setAuditFilters((prev) => ({ ...prev, entity: event.target.value }))}
+                />
+                <input
+                  type="date"
+                  value={auditFilters.from}
+                  onChange={(event) => setAuditFilters((prev) => ({ ...prev, from: event.target.value }))}
+                />
+                <input
+                  type="date"
+                  value={auditFilters.to}
+                  onChange={(event) => setAuditFilters((prev) => ({ ...prev, to: event.target.value }))}
+                />
+                <button type="button" className="primary-button" disabled={auditLoading} onClick={() => void applyAuditFilters()}>
+                  {auditLoading ? "Filtrando..." : "Aplicar filtros"}
+                </button>
+                <button type="button" className="modal-cancel" onClick={clearAuditFilters}>
+                  Limpar
+                </button>
+                <button
+                  type="button"
+                  className="table-edit-button"
+                  onClick={() => downloadActivityCsv(auditResults ?? activity, "atlas-auditoria.csv")}
+                >
+                  Exportar CSV
+                </button>
+              </div>
+              {auditError && <p className="modal-error">{auditError}</p>}
+
               <div className="activity-list">
-                {activity.length === 0 && (
-                  <p className="activity-empty">Nenhuma alteração registrada ainda.</p>
+                {(auditResults ?? activity).length === 0 && (
+                  <p className="activity-empty">Nenhuma alteração registrada para os filtros atuais.</p>
                 )}
-                {activity.map((entry) => {
+                {(auditResults ?? (showAllActivity ? activity : activity.slice(0, 5))).map((entry) => {
                   const detail = (() => {
                     try {
                       return JSON.parse(entry.detailJson) as Record<string, unknown>;
@@ -3363,12 +4769,25 @@ export function CommercialControl({
                         <strong>{entry.actorEmail}</strong>{" "}
                         {ACTION_LABELS[entry.action] ?? entry.action}
                         {company ? ` — ${company}` : ""}
+                        <small className="activity-entity">
+                          {entry.entity}
+                          {entry.entityId ? ` #${entry.entityId}` : ""}
+                        </small>
                       </span>
                       <small>{relativeTimestamp(entry.createdAt)}</small>
                     </div>
                   );
                 })}
               </div>
+              {!auditResults && activity.length > 5 && (
+                <button
+                  type="button"
+                  className="list-toggle"
+                  onClick={() => setShowAllActivity((prev) => !prev)}
+                >
+                  {showAllActivity ? "Ver menos" : `Ver mais (${activity.length - 5})`}
+                </button>
+              )}
             </article>
 
             <article className="panel access-panel">
@@ -3413,13 +4832,39 @@ export function CommercialControl({
             <article className="panel quality-panel">
               <div className="panel-heading">
                 <div>
-                  <span className="section-kicker">Qualidade da informação</span>
+                  <span className="section-kicker">Qualidade da informação · ao vivo</span>
+                  <h3>Completude dos negócios em {deals.length} negócio(s) cadastrados agora</h3>
+                </div>
+              </div>
+              <div className="quality-metric-grid">
+                {dataQualityMetrics.map((metric) => (
+                  <button
+                    type="button"
+                    key={metric.key}
+                    className="quality-metric-card"
+                    onClick={() => setDrilldown({ title: metric.label, dealIds: metric.dealIds })}
+                  >
+                    <span>{metric.label}</span>
+                    <strong>{percent.format(metric.ratio)}</strong>
+                    <small>{metric.count} de {deals.length} negócio(s) · clique para ver</small>
+                  </button>
+                ))}
+              </div>
+            </article>
+
+            <article className="panel quality-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Qualidade da informação · histórico</span>
                   <h3>Backlog de saneamento identificado na planilha</h3>
                 </div>
                 <span>{data.dataQualityIssues.length} itens</span>
               </div>
               <div className="quality-grid">
-                {data.dataQualityIssues.map((issue) => (
+                {(showAllQualityIssues
+                  ? data.dataQualityIssues
+                  : data.dataQualityIssues.slice(0, 5)
+                ).map((issue) => (
                   <div key={issue.title}>
                     <span className={`severity-label ${issue.severity}`}>
                       {issue.severity}
@@ -3428,6 +4873,56 @@ export function CommercialControl({
                     <strong>{issue.title}</strong>
                     <p>{issue.description}</p>
                     <b>Responsável: {issue.owner}</b>
+                  </div>
+                ))}
+              </div>
+              {data.dataQualityIssues.length > 5 && (
+                <button
+                  type="button"
+                  className="list-toggle"
+                  onClick={() => setShowAllQualityIssues((prev) => !prev)}
+                >
+                  {showAllQualityIssues
+                    ? "Ver menos"
+                    : `Ver mais (${data.dataQualityIssues.length - 5})`}
+                </button>
+              )}
+            </article>
+
+            <article className="panel roadmap-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Roadmap Enterprise</span>
+                  <h3>Módulos com arquitetura pronta, aguardando fonte de dados</h3>
+                </div>
+                <span>{ENTERPRISE_ROADMAP.length} módulo(s)</span>
+              </div>
+              <p className="dashboard-note">
+                Estes módulos do Revenue Operating System não têm fonte de dado real neste
+                aplicativo hoje (sem integração de marketing/SDR/CS/financeiro/NPS, sem log de
+                atividades de CRM). Os contratos de dados já estão definidos em{" "}
+                <code>app/deriveEnterpriseRoadmap.ts</code> para quando a integração existir —
+                nenhum número abaixo é simulado.
+              </p>
+              <div className="roadmap-grid">
+                {ENTERPRISE_ROADMAP.map((module) => (
+                  <div key={module.key} className="roadmap-card">
+                    <div className="roadmap-card-head">
+                      <strong>{module.title}</strong>
+                      <span className="roadmap-status-pill">{module.status}</span>
+                    </div>
+                    <p>{module.summary}</p>
+                    <div>
+                      <small className="roadmap-missing">Dados/integrações faltantes:</small>
+                      <ul>
+                        {module.missingData.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <span className="roadmap-contract">
+                      Contratos: {module.contractTypeNames.join(", ")}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -3547,6 +5042,349 @@ export function CommercialControl({
           </section>
         )}
 
+        {section === "integracoes" && (
+          <section className="page-content">
+            <div className="page-intro">
+              <div>
+                <span className="section-kicker">Integrações</span>
+                <h2>Bitrix24, Apollo, Google e IA em um só lugar.</h2>
+                <p>
+                  Configure as chaves uma vez e use para importar/exportar negócios, enriquecer
+                  leads e gerar relatórios executivos com IA.
+                </p>
+              </div>
+            </div>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Chaves de API</span>
+                  <h3>Credenciais dos serviços externos</h3>
+                </div>
+                {!integrationSettings && !integrationError && <span>Carregando...</span>}
+              </div>
+              <form
+                className="modal-form integration-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveIntegrationSettings();
+                }}
+              >
+                <label>
+                  <span>Webhook Bitrix24</span>
+                  <input
+                    placeholder={
+                      integrationSettings?.bitrixWebhookMasked ?? "https://seuportal.bitrix24.com.br/rest/1/xxxx/"
+                    }
+                    value={integrationForm.bitrixWebhookUrl}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({ ...prev, bitrixWebhookUrl: event.target.value }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                </label>
+                <label>
+                  <span>Chave da API Apollo</span>
+                  <input
+                    placeholder={integrationSettings?.apolloKeyMasked ?? "Chave não configurada"}
+                    value={integrationForm.apolloApiKey}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({ ...prev, apolloApiKey: event.target.value }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                </label>
+                <label>
+                  <span>Chave da API Google</span>
+                  <input
+                    placeholder={integrationSettings?.googleKeyMasked ?? "Chave não configurada"}
+                    value={integrationForm.googleApiKey}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({ ...prev, googleApiKey: event.target.value }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                </label>
+                <label>
+                  <span>Provedor de IA</span>
+                  <select
+                    value={integrationForm.aiProvider}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({
+                        ...prev,
+                        aiProvider: event.target.value as "auto" | "openai" | "anthropic",
+                      }))
+                    }
+                    disabled={isReadOnly}
+                  >
+                    <option value="auto">Automático (usa a chave preenchida)</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Chave da API OpenAI</span>
+                  <input
+                    placeholder={integrationSettings?.openaiKeyMasked ?? "Chave não configurada"}
+                    value={integrationForm.openaiApiKey}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({ ...prev, openaiApiKey: event.target.value }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                </label>
+                <label>
+                  <span>Chave da API Anthropic</span>
+                  <input
+                    placeholder={integrationSettings?.anthropicKeyMasked ?? "Chave não configurada"}
+                    value={integrationForm.anthropicApiKey}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({ ...prev, anthropicApiKey: event.target.value }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                </label>
+
+                {integrationError && <p className="modal-error">{integrationError}</p>}
+
+                {!isReadOnly && (
+                  <div className="modal-actions">
+                    <div />
+                    <div className="modal-actions-right">
+                      <button type="submit" className="primary-button" disabled={integrationSaving}>
+                        {integrationSaving ? "Salvando..." : "Salvar"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </form>
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Bitrix24</span>
+                  <h3>Importar e exportar negócios</h3>
+                </div>
+              </div>
+              <div className="integration-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={isReadOnly || bitrixImportLoading}
+                  onClick={() => void runBitrixImport()}
+                >
+                  {bitrixImportLoading ? "Buscando..." : "Importar do Bitrix24"}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={isReadOnly || bitrixExporting || deals.length === 0}
+                  onClick={() => void runBitrixExport()}
+                >
+                  {bitrixExporting ? "Exportando..." : "Exportar todos para o Bitrix24"}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => downloadCsv(deals, "atlas-negocios-2026.csv")}
+                >
+                  Exportar CSV
+                </button>
+                <label className={isReadOnly ? "csv-import-button disabled" : "csv-import-button"}>
+                  {csvImporting ? "Importando..." : "Importar CSV"}
+                  <input
+                    type="file"
+                    accept=".csv"
+                    disabled={isReadOnly || csvImporting}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (file) void handleCsvImport(file);
+                    }}
+                  />
+                </label>
+              </div>
+              {bitrixImportError && <p className="modal-error">{bitrixImportError}</p>}
+              {bitrixExportError && <p className="modal-error">{bitrixExportError}</p>}
+              {csvImportError && <p className="modal-error">{csvImportError}</p>}
+
+              {bitrixImportItems && (
+                <div className="data-table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th></th>
+                        <th>Título</th>
+                        <th>Valor</th>
+                        <th>Etapa (Bitrix)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bitrixImportItems.map((item) => (
+                        <tr key={item.bitrixId}>
+                          <td>
+                            <input
+                              type="checkbox"
+                              checked={bitrixImportSelected.has(item.bitrixId)}
+                              onChange={() => toggleBitrixImportSelection(item.bitrixId)}
+                            />
+                          </td>
+                          <td>{item.title}</td>
+                          <td>{preciseCurrency.format(item.amount)}</td>
+                          <td>{item.stageId}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="modal-actions">
+                    <div />
+                    <div className="modal-actions-right">
+                      <button
+                        type="button"
+                        className="modal-cancel"
+                        onClick={() => setBitrixImportItems(null)}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        disabled={bitrixImportConfirming || bitrixImportSelected.size === 0}
+                        onClick={() => void confirmBitrixImport()}
+                      >
+                        {bitrixImportConfirming
+                          ? "Importando..."
+                          : `Confirmar importação (${bitrixImportSelected.size})`}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Prospecção</span>
+                  <h3>Buscar ou enriquecer um lead</h3>
+                </div>
+              </div>
+              <div className="lead-search-form">
+                <label>
+                  <span>Empresa</span>
+                  <input
+                    value={leadQuery.company}
+                    onChange={(event) =>
+                      setLeadQuery((prev) => ({ ...prev, company: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Domínio</span>
+                  <input
+                    placeholder="empresa.com.br"
+                    value={leadQuery.domain}
+                    onChange={(event) =>
+                      setLeadQuery((prev) => ({ ...prev, domain: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  <span>E-mail da pessoa</span>
+                  <input
+                    value={leadQuery.email}
+                    onChange={(event) =>
+                      setLeadQuery((prev) => ({ ...prev, email: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
+              <div className="integration-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={isReadOnly || leadLoading !== null}
+                  onClick={() => void runLeadSearch("apollo")}
+                >
+                  {leadLoading === "apollo" ? "Buscando..." : "Buscar no Apollo"}
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={isReadOnly || leadLoading !== null}
+                  onClick={() => void runLeadSearch("google")}
+                >
+                  {leadLoading === "google" ? "Buscando..." : "Buscar no Google"}
+                </button>
+              </div>
+              {leadError && <p className="modal-error">{leadError}</p>}
+              {leadResult && (
+                <div className="lead-result-card">
+                  <div>
+                    <span>Nome</span>
+                    <strong>{leadResult.name ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Empresa</span>
+                    <strong>{leadResult.company ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Cargo</span>
+                    <strong>{leadResult.title ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>E-mail</span>
+                    <strong>{leadResult.email ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Telefone</span>
+                    <strong>{leadResult.phone ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Endereço</span>
+                    <strong>{leadResult.address ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Site</span>
+                    <strong>{leadResult.website ?? "—"}</strong>
+                  </div>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => openDealModalFromLead(leadResult)}
+                    >
+                      Salvar como negócio
+                    </button>
+                  )}
+                </div>
+              )}
+            </article>
+
+            <article className="panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Relatórios</span>
+                  <h3>Gerar relatório executivo com IA</h3>
+                </div>
+              </div>
+              <p>
+                Usa o resumo executivo, health score, alertas ativos e desempenho por vendedor já
+                calculados nesta tela para escrever um relatório narrativo.
+              </p>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={isReadOnly || aiReportLoading}
+                onClick={() => void generateAiReport()}
+              >
+                Gerar relatório com IA
+              </button>
+            </article>
+          </section>
+        )}
+
         <footer className="app-footer">
           <span>
             Atlas Comercial 360 · Base importada em{" "}
@@ -3561,7 +5399,13 @@ export function CommercialControl({
           mode={dealModal.mode}
           initialValues={
             dealModal.mode === "create"
-              ? emptyForm({ monthNumber: dealModal.defaultMonthNumber, stage: dealModal.defaultStage })
+              ? {
+                  ...emptyForm({
+                    monthNumber: dealModal.defaultMonthNumber,
+                    stage: dealModal.defaultStage,
+                  }),
+                  ...leadPrefill,
+                }
               : formFromDeal(dealModal.deal)
           }
           owners={owners}
@@ -3571,6 +5415,7 @@ export function CommercialControl({
           onClose={() => {
             setDealModal(null);
             setModalError(null);
+            setLeadPrefill(null);
           }}
           onSubmit={handleModalSubmit}
           onDelete={
@@ -3614,6 +5459,14 @@ export function CommercialControl({
         />
       )}
 
+      {drilldown && (
+        <DealDrilldownModal
+          title={drilldown.title}
+          deals={drilldown.dealIds.map((id) => dealsById.get(id)).filter((d): d is Deal => Boolean(d))}
+          onClose={() => setDrilldown(null)}
+        />
+      )}
+
       {monthlyRecordModal &&
         (() => {
           const target = targets.find((t) => t.monthNumber === monthlyRecordModal.monthNumber) ?? {
@@ -3638,6 +5491,76 @@ export function CommercialControl({
             />
           );
         })()}
+
+      {objectiveModal && (
+        <ObjectiveModal
+          objective={objectiveModal}
+          saving={objectiveModalSaving}
+          errorMessage={objectiveModalError}
+          onClose={() => {
+            setObjectiveModal(null);
+            setObjectiveModalError(null);
+          }}
+          onSubmit={(values) => handleObjectiveSubmit(objectiveModal, values)}
+        />
+      )}
+
+      {aiReportOpen && (
+        <div className="modal-overlay" onClick={() => setAiReportOpen(false)}>
+          <div
+            className="modal-card modal-card-large"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-heading">
+              <h3>Relatório executivo (IA)</h3>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setAiReportOpen(false)}
+                aria-label="Fechar"
+              >
+                ×
+              </button>
+            </div>
+            <div className="ai-report-body">
+              {aiReportLoading && <p className="activity-empty">Gerando relatório...</p>}
+              {aiReportError && <p className="modal-error">{aiReportError}</p>}
+              {!aiReportLoading && aiReportText && (
+                <pre className="ai-report-text">{aiReportText}</pre>
+              )}
+            </div>
+            {aiReportText && !aiReportLoading && (
+              <div className="modal-actions">
+                <div />
+                <div className="modal-actions-right">
+                  <button
+                    type="button"
+                    className="modal-cancel"
+                    onClick={() => void navigator.clipboard.writeText(aiReportText)}
+                  >
+                    Copiar
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => {
+                      const blob = new Blob([aiReportText], { type: "text/markdown;charset=utf-8" });
+                      const url = URL.createObjectURL(blob);
+                      const anchor = document.createElement("a");
+                      anchor.href = url;
+                      anchor.download = "relatorio-atlas-comercial.md";
+                      anchor.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    Baixar .md
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className={`app-toast ${toast.tone}`} role="status">

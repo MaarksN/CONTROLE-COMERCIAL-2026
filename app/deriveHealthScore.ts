@@ -12,7 +12,7 @@ import type { Deal, ExecutiveSummary, MonthlyMetric } from "./deriveMetrics";
  */
 
 export type DataQualityIssue = {
-  severity: "alta" | "média" | "baixa";
+  severity: string;
   category: string;
   title: string;
   description: string;
@@ -46,11 +46,15 @@ export const HEALTH_SCORE_WEIGHTS = {
 } as const;
 
 const STALE_DAYS_THRESHOLD = 30;
-const SEVERITY_PENALTY: Record<DataQualityIssue["severity"], number> = {
+const SEVERITY_PENALTY: Record<string, number> = {
   alta: 15,
   média: 8,
   baixa: 3,
 };
+
+function severityPenalty(severity: string): number {
+  return SEVERITY_PENALTY[severity] ?? 5;
+}
 
 function bandFor(score: number): SalesHealthScore["band"] {
   if (score >= 90) return "excelente";
@@ -111,7 +115,7 @@ export function computeSalesHealthScore({
 
   // CRM / Qualidade de Dados: real flagged issues (severity-weighted) plus
   // the share of deals missing origin or key lifecycle dates.
-  const issuesPenalty = dataQualityIssues.reduce((sum, issue) => sum + SEVERITY_PENALTY[issue.severity], 0);
+  const issuesPenalty = dataQualityIssues.reduce((sum, issue) => sum + severityPenalty(issue.severity), 0);
   const missingOrigin = deals.filter((d) => !d.origin).length;
   const missingDates = deals.filter((d) => !d.proposalAcceptedAt || !d.contractSignedAt).length;
   const missingRatio = deals.length > 0 ? (missingOrigin + missingDates) / (deals.length * 2) : 0;

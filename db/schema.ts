@@ -161,3 +161,20 @@ export const auditLog = sqliteTable("audit_log", {
   detailJson: text("detail_json").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+// Single-row table (id is always "default") holding third-party API credentials.
+// Stored in plain text — this project has no Cloudflare secrets binding configured,
+// so this is the only persistence surface available. Access is gated by requireUser()
+// in every route that reads/writes it, and it is never included in loadCommercialData()
+// (the payload served to public/preview visitors).
+export const integrationSettings = sqliteTable("integration_settings", {
+  id: text("id").primaryKey().default("default"),
+  bitrixWebhookUrl: text("bitrix_webhook_url"),
+  apolloApiKey: text("apollo_api_key"),
+  googleApiKey: text("google_api_key"),
+  aiProvider: text("ai_provider").notNull().default("auto"),
+  openaiApiKey: text("openai_api_key"),
+  anthropicApiKey: text("anthropic_api_key"),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
