@@ -9,6 +9,7 @@ import {
   type Deal,
   type MonthlyMetric,
   type Seller,
+  type SellerGrowthTarget,
   type SellerRole,
   type Stage,
   type Target,
@@ -83,6 +84,7 @@ const ACTION_LABELS: Record<string, string> = {
   "deal.delete": "excluiu o negócio",
   "target.update": "atualizou a meta",
   "seller.create": "adicionou o vendedor",
+  "growth_target.update": "atualizou a meta de crescimento",
   "action_item.create": "criou o item do plano de ação",
   "action_item.update": "atualizou o item do plano de ação",
   "action_item.delete": "excluiu o item do plano de ação",
@@ -530,6 +532,145 @@ function buildSellerSummary(sellerDeals: Deal[], monthlyMetricsList: MonthlyMetr
   };
 }
 
+// Forward-looking growth plan horizon: between 20 and 24 months so a
+// seller's targets keep stretching well past the current fiscal year.
+const GROWTH_PLAN_HORIZON_MONTHS = 24;
+// Suggested month-over-month increase applied on top of the seller's own
+// historical monthly average, compounding across the horizon.
+const GROWTH_PLAN_MONTHLY_INCREASE = 0.03;
+
+type GrowthPlanRow = {
+  year: number;
+  monthNumber: number;
+  month: string;
+  label: string;
+  entryTarget: number;
+  realizedTarget: number;
+  isSuggested: boolean;
+};
+
+/**
+ * Builds the seller's forward-looking plan: `GROWTH_PLAN_HORIZON_MONTHS`
+ * starting at the current month, one row per month, with a target for
+ * pipeline entry ("entrada" — adjusted value of every deal that entered the
+ * funnel, any stage) and realized revenue ("realizado" — adjusted value of
+ * deals won/billed/paid). Rows a user already saved via the growth-plan API
+ * win over the suggestion; unsaved rows fall back to the seller's own
+ * historical monthly average compounded by `GROWTH_PLAN_MONTHLY_INCREASE`,
+ * so every seller starts from their own baseline rather than a company-wide
+ * number.
+ */
+function buildGrowthPlan(
+  ownerDeals: Deal[],
+  savedTargets: SellerGrowthTarget[],
+  asOf: string,
+): GrowthPlanRow[] {
+  const now = new Date(asOf);
+  const startYear = now.getFullYear();
+  const startMonth = now.getMonth() + 1;
+
+  const entryByMonth = new Map<number, number>();
+  const realizedByMonth = new Map<number, number>();
+  for (const deal of ownerDeals) {
+    entryByMonth.set(deal.monthNumber, (entryByMonth.get(deal.monthNumber) ?? 0) + deal.adjusted);
+    if (deal.stage === "ganho" || deal.stage === "faturado" || deal.stage === "pago") {
+      realizedByMonth.set(
+        deal.monthNumber,
+        (realizedByMonth.get(deal.monthNumber) ?? 0) + deal.adjusted,
+      );
+    }
+  }
+  const monthsWithHistory = [...entryByMonth.keys()].filter((month) => month <= startMonth);
+  const averageEntry = monthsWithHistory.length
+    ? monthsWithHistory.reduce((sum, month) => sum + (entryByMonth.get(month) ?? 0), 0) /
+      monthsWithHistory.length
+    : 0;
+  const averageRealized = monthsWithHistory.length
+    ? monthsWithHistory.reduce((sum, month) => sum + (realizedByMonth.get(month) ?? 0), 0) /
+      monthsWithHistory.length
+    : 0;
+
+  const savedByKey = new Map(savedTargets.map((row) => [`${row.year}-${row.monthNumber}`, row]));
+
+  const rows: GrowthPlanRow[] = [];
+  for (let step = 0; step < GROWTH_PLAN_HORIZON_MONTHS; step++) {
+    const absoluteMonth = startMonth - 1 + step;
+    const year = startYear + Math.floor(absoluteMonth / 12);
+    const monthNumber = (absoluteMonth % 12) + 1;
+    const month = MONTH_NAMES[monthNumber - 1];
+    const saved = savedByKey.get(`${year}-${monthNumber}`);
+    const growthFactor = (1 + GROWTH_PLAN_MONTHLY_INCREASE) ** (step + 1);
+    rows.push({
+      year,
+      monthNumber,
+      month,
+      label: `${month.slice(0, 3)}/${String(year).slice(2)}`,
+      entryTarget: saved?.entryTarget ?? Math.round(averageEntry * growthFactor),
+      realizedTarget: saved?.realizedTarget ?? Math.round(averageRealized * growthFactor),
+      isSuggested: !saved,
+    });
+  }
+  return rows;
+}
+
+function EditableCurrencyCell({
+  value,
+  disabled,
+  suggested,
+  onSave,
+}: {
+  value: number;
+  disabled: boolean;
+  suggested: boolean;
+  onSave: (value: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(String(value));
+
+  if (disabled) {
+    return <span className={suggested ? "growth-cell suggested" : "growth-cell"}>{currency.format(value)}</span>;
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className={suggested ? "growth-cell-edit suggested" : "growth-cell-edit"}
+        title="Clique para editar"
+        onClick={() => {
+          setDraft(String(value));
+          setEditing(true);
+        }}
+      >
+        {currency.format(value)}
+      </button>
+    );
+  }
+
+  return (
+    <input
+      className="growth-cell-input"
+      type="number"
+      min="0"
+      step="1"
+      autoFocus
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        setEditing(false);
+        const parsed = Number(draft);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed !== value) {
+          onSave(parsed);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") event.currentTarget.blur();
+        if (event.key === "Escape") setEditing(false);
+      }}
+    />
+  );
+}
+
 function SellerModal({
   saving,
   errorMessage,
@@ -858,6 +999,7 @@ export function CommercialControl({
   const [deals, setDeals] = useState<Deal[]>(data.deals2026);
   const [targets, setTargets] = useState<Target[]>(data.targets);
   const [sellers, setSellers] = useState<Seller[]>(data.sellers);
+  const [growthTargets, setGrowthTargets] = useState<SellerGrowthTarget[]>(data.growthTargets);
   const [asOf, setAsOf] = useState(data.asOf);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [lastSyncedAt, setLastSyncedAt] = useState(() => Date.now());
@@ -914,11 +1056,12 @@ export function CommercialControl({
 
     async function poll() {
       try {
-        const [dealsRes, activityRes, sellersRes, actionItemsRes] = await Promise.all([
+        const [dealsRes, activityRes, sellersRes, actionItemsRes, growthPlanRes] = await Promise.all([
           fetch("/api/deals", { cache: "no-store", signal: controller.signal }),
           fetch("/api/activity?limit=20", { cache: "no-store", signal: controller.signal }),
           fetch("/api/sellers", { cache: "no-store", signal: controller.signal }),
           fetch("/api/action-items", { cache: "no-store", signal: controller.signal }),
+          fetch("/api/growth-plan", { cache: "no-store", signal: controller.signal }),
         ]);
         if (!dealsRes.ok) throw new Error("sync failed");
         const dealsJson = (await dealsRes.json()) as { deals: Deal[]; targets: Target[] };
@@ -947,6 +1090,12 @@ export function CommercialControl({
         if (actionItemsRes.ok) {
           const actionItemsJson = (await actionItemsRes.json()) as { actionItems: ActionItem[] };
           if (!cancelled) setActionItems(actionItemsJson.actionItems);
+        }
+        if (growthPlanRes.ok) {
+          const growthPlanJson = (await growthPlanRes.json()) as {
+            growthTargets: SellerGrowthTarget[];
+          };
+          if (!cancelled) setGrowthTargets(growthPlanJson.growthTargets);
         }
       } catch (error) {
         if (!cancelled && (error as Error).name !== "AbortError") {
@@ -1195,21 +1344,59 @@ export function CommercialControl({
     }
   }
 
-  function updateTarget(monthNumber: number, value: number) {
-    void updateMonthlyRecord(
-      monthNumber,
-      { target: value },
-      { silent: true, successMessage: "Meta atualizada." },
+  async function updateGrowthTarget(
+    owner: string,
+    year: number,
+    monthNumber: number,
+    patch: { entryTarget?: number; realizedTarget?: number },
+  ) {
+    const previous = growthTargets;
+    const existing = growthTargets.find(
+      (row) => row.owner === owner && row.year === year && row.monthNumber === monthNumber,
     );
-  }
-
-  function handleMonthlyRecordSubmit(values: { target: number; sold: number; adjusted: number }) {
-    if (!monthlyRecordModal) return;
-    setMonthlyRecordModalSaving(true);
-    setMonthlyRecordModalError(null);
-    void updateMonthlyRecord(monthlyRecordModal.monthNumber, values, {
-      successMessage: "Mês atualizado.",
+    const nextRow: SellerGrowthTarget = {
+      owner,
+      year,
+      monthNumber,
+      month: MONTH_NAMES[monthNumber - 1],
+      entryTarget: patch.entryTarget ?? existing?.entryTarget ?? 0,
+      realizedTarget: patch.realizedTarget ?? existing?.realizedTarget ?? 0,
+    };
+    setGrowthTargets((prev) => {
+      const exists = prev.some(
+        (row) => row.owner === owner && row.year === year && row.monthNumber === monthNumber,
+      );
+      return exists
+        ? prev.map((row) =>
+            row.owner === owner && row.year === year && row.monthNumber === monthNumber
+              ? nextRow
+              : row,
+          )
+        : [...prev, nextRow];
     });
+
+    try {
+      const res = await fetch(
+        `/api/growth-plan/${encodeURIComponent(owner)}/${year}/${monthNumber}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            entryTarget: nextRow.entryTarget,
+            realizedTarget: nextRow.realizedTarget,
+          }),
+        },
+      );
+      const json = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Erro ao atualizar meta de crescimento");
+      showToast("success", "Meta de crescimento atualizada.");
+    } catch (error) {
+      setGrowthTargets(previous);
+      showToast(
+        "error",
+        error instanceof Error ? error.message : "Erro ao atualizar meta de crescimento",
+      );
+    }
   }
 
   async function addSeller(values: { name: string; role: SellerRole }) {
@@ -1452,6 +1639,27 @@ export function CommercialControl({
   const visaoSellerSummary = useMemo(
     () => buildSellerSummary(visaoSellerDeals, monthlyMetrics),
     [visaoSellerDeals, monthlyMetrics],
+  );
+
+  const selectedOwnerAllDeals = useMemo(
+    () => deals.filter((deal) => deal.owner === selectedOwner),
+    [deals, selectedOwner],
+  );
+  const selectedOwnerGrowthTargets = useMemo(
+    () => growthTargets.filter((row) => row.owner === selectedOwner),
+    [growthTargets, selectedOwner],
+  );
+  const selectedOwnerGrowthPlan = useMemo(
+    () => buildGrowthPlan(selectedOwnerAllDeals, selectedOwnerGrowthTargets, asOf),
+    [selectedOwnerAllDeals, selectedOwnerGrowthTargets, asOf],
+  );
+  const selectedOwnerWon = useMemo(
+    () => visaoSellerDeals.filter((deal) => deal.stage !== "aberto"),
+    [visaoSellerDeals],
+  );
+  const selectedOwnerOpen = useMemo(
+    () => visaoSellerDeals.filter((deal) => deal.stage === "aberto"),
+    [visaoSellerDeals],
   );
 
   const currentSheet =
@@ -2302,6 +2510,108 @@ export function CommercialControl({
                     </div>
                   </article>
                 )}
+
+                <article className="panel seller-closed-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="section-kicker">Histórico</span>
+                      <h3>O que {selectedOwner} fechou e o que ainda não fechou</h3>
+                    </div>
+                  </div>
+                  <div className="seller-kpi-grid cols-3">
+                    <article>
+                      <span>Fechado (ganho/faturado/pago)</span>
+                      <strong>
+                        {currency.format(
+                          selectedOwnerWon.reduce((sum, deal) => sum + deal.adjusted, 0),
+                        )}
+                      </strong>
+                      <small>{selectedOwnerWon.length} negócios</small>
+                    </article>
+                    <article>
+                      <span>Ainda aberto / não fechado</span>
+                      <strong>
+                        {currency.format(
+                          selectedOwnerOpen.reduce((sum, deal) => sum + deal.adjusted, 0),
+                        )}
+                      </strong>
+                      <small>{selectedOwnerOpen.length} negócios</small>
+                    </article>
+                    <article>
+                      <span>Taxa de fechamento</span>
+                      <strong>
+                        {percent.format(
+                          visaoSellerDeals.length
+                            ? selectedOwnerWon.length / visaoSellerDeals.length
+                            : 0,
+                        )}
+                      </strong>
+                      <small>{visaoSellerDeals.length} negócios no período</small>
+                    </article>
+                  </div>
+                </article>
+
+                <article className="panel growth-plan-panel">
+                  <div className="panel-heading">
+                    <div>
+                      <span className="section-kicker">Plano de crescimento</span>
+                      <h3>Meta de entrada e realizado — próximos {GROWTH_PLAN_HORIZON_MONTHS} meses</h3>
+                    </div>
+                    <span className="issue-count">
+                      {isReadOnly ? "Somente leitura" : "Clique num valor para editar"}
+                    </span>
+                  </div>
+                  <p className="growth-plan-note">
+                    Sugestão calculada a partir da média histórica mensal de {selectedOwner}, com
+                    crescimento composto de {(GROWTH_PLAN_MONTHLY_INCREASE * 100).toFixed(0)}% ao
+                    mês. Valores em destaque já foram ajustados manualmente; os demais são apenas
+                    sugestão e podem ser editados.
+                  </p>
+                  <div className="data-table-wrap">
+                    <table className="data-table growth-plan-table">
+                      <thead>
+                        <tr>
+                          <th>Mês</th>
+                          <th>Meta de entrada</th>
+                          <th>Meta de realizado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedOwnerGrowthPlan.map((row) => (
+                          <tr key={`${row.year}-${row.monthNumber}`}>
+                            <td>
+                              <strong>{row.label}</strong>
+                            </td>
+                            <td>
+                              <EditableCurrencyCell
+                                value={row.entryTarget}
+                                disabled={isReadOnly}
+                                suggested={row.isSuggested}
+                                onSave={(value) =>
+                                  void updateGrowthTarget(selectedOwner, row.year, row.monthNumber, {
+                                    entryTarget: value,
+                                  })
+                                }
+                              />
+                            </td>
+                            <td>
+                              <EditableCurrencyCell
+                                value={row.realizedTarget}
+                                disabled={isReadOnly}
+                                suggested={row.isSuggested}
+                                onSave={(value) =>
+                                  void updateGrowthTarget(selectedOwner, row.year, row.monthNumber, {
+                                    realizedTarget: value,
+                                  })
+                                }
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
 
                 <div className="visao-vendedor-footer">
                   <button type="button" className="primary-button" onClick={() => setSection("equipe")}>

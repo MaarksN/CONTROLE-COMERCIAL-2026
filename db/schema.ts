@@ -111,6 +111,35 @@ export const userRoles = sqliteTable("user_roles", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+// Forward-looking growth plan per seller: monthly targets for pipeline
+// entry ("entrada") and closed/realized revenue ("realizado"), spanning a
+// 20-24 month horizon so leadership can track increase over time, not just
+// the current year.
+export const sellerGrowthTargets = sqliteTable(
+  "seller_growth_targets",
+  {
+    id: text("id").primaryKey(),
+    owner: text("owner").notNull(),
+    year: integer("year").notNull(),
+    monthNumber: integer("month_number").notNull(),
+    month: text("month").notNull(),
+    entryTarget: real("entry_target").notNull().default(0),
+    realizedTarget: real("realized_target").notNull().default(0),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    ownerYearMonthUnique: uniqueIndex("seller_growth_targets_owner_year_month_unique").on(
+      table.owner,
+      table.year,
+      table.monthNumber,
+    ),
+    ownerIdx: index("seller_growth_targets_owner_idx").on(table.owner),
+  }),
+);
+
 export const auditLog = sqliteTable("audit_log", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   actorEmail: text("actor_email").notNull(),

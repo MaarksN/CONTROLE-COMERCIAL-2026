@@ -9,6 +9,7 @@ import {
   type OriginPerformance,
   type OwnerPerformance,
   type Seller,
+  type SellerGrowthTarget,
   type Target,
 } from "../app/deriveMetrics";
 import {
@@ -94,6 +95,7 @@ export type CommercialData = {
   originPerformance: OriginPerformance[];
   sellers: Seller[];
   actionItems: ActionItem[];
+  growthTargets: SellerGrowthTarget[];
   objectives: StaticData["objectives"];
   governance: StaticData["governance"];
   dataQualityIssues: StaticData["dataQualityIssues"];
@@ -635,6 +637,120 @@ export async function deleteActionItem(database: D1Database, id: string): Promis
   return rowToActionItem(existing);
 }
 
+type SellerGrowthTargetRow = {
+  owner: string;
+  year: number;
+  month_number: number;
+  month: string;
+  entry_target: number;
+  realized_target: number;
+};
+
+const GROWTH_TARGET_COLUMNS = "owner, year, month_number, month, entry_target, realized_target";
+
+function rowToGrowthTarget(row: SellerGrowthTargetRow): SellerGrowthTarget {
+  return {
+    owner: row.owner,
+    year: row.year,
+    monthNumber: row.month_number,
+    month: row.month,
+    entryTarget: row.entry_target,
+    realizedTarget: row.realized_target,
+  };
+}
+
+/**
+ * Same self-healing rationale as `ensureActionItemsTable`: this project has
+ * no auto-applied migrations, so the table is created here, guarded by
+ * `IF NOT EXISTS`, regardless of whether `npm run db:generate`'s SQL file
+ * was actually run against this environment's D1.
+ */
+async function ensureSellerGrowthTargetsTable(database: D1Database) {
+  await database.batch([
+    database.prepare(
+      `CREATE TABLE IF NOT EXISTS seller_growth_targets (
+        id text PRIMARY KEY NOT NULL,
+        owner text NOT NULL,
+        year integer NOT NULL,
+        month_number integer NOT NULL,
+        month text NOT NULL,
+        entry_target real DEFAULT 0 NOT NULL,
+        realized_target real DEFAULT 0 NOT NULL,
+        created_by text,
+        updated_by text,
+        created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+      )`,
+    ),
+    database.prepare(
+      "CREATE UNIQUE INDEX IF NOT EXISTS seller_growth_targets_owner_year_month_unique ON seller_growth_targets (owner, year, month_number)",
+    ),
+    database.prepare(
+      "CREATE INDEX IF NOT EXISTS seller_growth_targets_owner_idx ON seller_growth_targets (owner)",
+    ),
+  ]);
+}
+
+export async function readSellerGrowthTargets(
+  database: D1Database,
+): Promise<SellerGrowthTarget[]> {
+  await ensureSellerGrowthTargetsTable(database);
+  const rows = await database
+    .prepare(
+      `SELECT ${GROWTH_TARGET_COLUMNS} FROM seller_growth_targets ORDER BY owner, year, month_number`,
+    )
+    .all<SellerGrowthTargetRow>();
+  return rows.results.map(rowToGrowthTarget);
+}
+
+export async function upsertSellerGrowthTarget(
+  database: D1Database,
+  input: {
+    owner: string;
+    year: number;
+    monthNumber: number;
+    month: string;
+    entryTarget: number;
+    realizedTarget: number;
+    actorEmail: string;
+  },
+): Promise<SellerGrowthTarget> {
+  await ensureSellerGrowthTargetsTable(database);
+  const id = `${input.owner}-${input.year}-${input.monthNumber}`;
+
+  await database
+    .prepare(
+      `INSERT INTO seller_growth_targets (id, owner, year, month_number, month, entry_target, realized_target, created_by, updated_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       ON CONFLICT(owner, year, month_number) DO UPDATE SET
+         entry_target = excluded.entry_target,
+         realized_target = excluded.realized_target,
+         updated_by = excluded.updated_by,
+         updated_at = CURRENT_TIMESTAMP`,
+    )
+    .bind(
+      id,
+      input.owner,
+      input.year,
+      input.monthNumber,
+      input.month,
+      input.entryTarget,
+      input.realizedTarget,
+      input.actorEmail,
+      input.actorEmail,
+    )
+    .run();
+
+  const row = await database
+    .prepare(
+      `SELECT ${GROWTH_TARGET_COLUMNS} FROM seller_growth_targets WHERE owner = ? AND year = ? AND month_number = ?`,
+    )
+    .bind(input.owner, input.year, input.monthNumber)
+    .first<SellerGrowthTargetRow>();
+  if (!row) throw new Error("Falha ao salvar a meta de crescimento.");
+  return rowToGrowthTarget(row);
+}
+
 function parsePayloads<T>(rows: D1Row[]): T[] {
   return rows.map((row) => JSON.parse(row.payload_json) as T);
 }
@@ -739,6 +855,7 @@ function buildFromStaticJson(asOf: string): CommercialData {
     historicalDeals: commercialDataJson.historicalDeals,
     sellers,
     actionItems,
+    growthTargets: [],
     objectives: commercialDataJson.objectives,
     governance: commercialDataJson.governance,
     dataQualityIssues: commercialDataJson.dataQualityIssues,
@@ -755,14 +872,16 @@ export async function loadCommercialData(): Promise<CommercialData> {
     // Sequenced: readDealsAndTargets() runs ensureSeeded()/ensureStageBackfill()
     // first, which the objectives/workbook queries below depend on existing.
     const { deals, targets } = await readDealsAndTargets(env.DB);
-    const [sellers, actionItems, objectiveResult, workbookResult] = await Promise.all([
-      readSellerRoster(env.DB),
-      readActionItems(env.DB),
-      env.DB.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>(),
-      env.DB.prepare(
-        "SELECT sheet_name, row_number, data_json, formula_json FROM workbook_rows ORDER BY id",
-      ).all<WorkbookRow>(),
-    ]);
+    const [sellers, actionItems, growthTargets, objectiveResult, workbookResult] =
+      await Promise.all([
+        readSellerRoster(env.DB),
+        readActionItems(env.DB),
+        readSellerGrowthTargets(env.DB),
+        env.DB.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>(),
+        env.DB.prepare(
+          "SELECT sheet_name, row_number, data_json, formula_json FROM workbook_rows ORDER BY id",
+        ).all<WorkbookRow>(),
+      ]);
 
     const derived = deriveMetrics({
       deals,
@@ -805,6 +924,7 @@ export async function loadCommercialData(): Promise<CommercialData> {
       historicalDeals: commercialDataJson.historicalDeals,
       sellers,
       actionItems,
+      growthTargets,
       objectives: parsePayloads<StaticData["objectives"][number]>(objectiveResult.results),
       governance: commercialDataJson.governance,
       dataQualityIssues: commercialDataJson.dataQualityIssues,

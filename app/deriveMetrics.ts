@@ -97,6 +97,21 @@ export type Seller = {
   role: SellerRole;
 };
 
+/**
+ * Forward-looking growth plan cell: one seller's pipeline-entry ("entrada")
+ * and closed-revenue ("realizado") target for a single month of the 20-24
+ * month horizon. Distinct from `Target`, which is the company-wide 2026
+ * monthly target — this is per-seller and spans beyond the current year.
+ */
+export type SellerGrowthTarget = {
+  owner: string;
+  year: number;
+  monthNumber: number;
+  month: string;
+  entryTarget: number;
+  realizedTarget: number;
+};
+
 export type OwnerPerformance = {
   owner: string;
   deals: number;
