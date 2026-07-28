@@ -27,6 +27,7 @@ import {
   computeForecastScenarios,
 } from "./deriveRevenueIntelligence";
 import { computeSalesHealthScore } from "./deriveHealthScore";
+import { ThemeToggle } from "./ThemeToggle";
 import { AssistantWidget } from "./AssistantWidget";
 import { computeAlerts, type AlertState } from "./deriveAlerts";
 import { computeSellerPerformanceScore } from "./deriveSellerScore";
@@ -1233,7 +1234,13 @@ function DealDrilldownModal({
                       </span>
                     </td>
                     <td className="emphasis">{preciseCurrency.format(deal.adjusted)}</td>
-                  </tr>
+                          <td className="omnichannel-actions" onClick={(e) => e.stopPropagation()}>
+                            <button title="WhatsApp" onClick={() => triggerWhatsapp("551199999999")}>📱</button>
+                            <button title="E-mail" onClick={() => triggerEmail("contato@" + deal.company.toLowerCase().replace(/ /g, '') + ".com")}>✉️</button>
+                            <button title="Meet" onClick={() => triggerMeet(deal.company)}>📅</button>
+                          </td>
+                        </tr>
+
                 ))}
               </tbody>
             </table>
@@ -2870,6 +2877,7 @@ export function CommercialControl({
             <h1>{navItems.find((item) => item.id === section)?.label}</h1>
           </div>
           <div className="user-area">
+            <ThemeToggle />
             <div className="period-chip">
               <span>Período</span>
               <strong>Jan — {currentMonthMetric?.month.slice(0, 3) ?? "Dez"} 2026</strong>
@@ -5037,7 +5045,7 @@ export function CommercialControl({
             <div className="page-intro">
               <div>
                 <span className="section-kicker">Integrações</span>
-                <h2>Bitrix24, Apollo, Google e IA em um só lugar.</h2>
+                <h2>Hub Omnichannel: IA, Comunicação e Inteligência.</h2>
                 <p>
                   Configure as chaves uma vez e use para importar/exportar negócios, enriquecer
                   leads e gerar relatórios executivos com IA.
@@ -5135,7 +5143,7 @@ export function CommercialControl({
                   />
                 </label>
 
-                {integrationError && <p className="modal-error">{integrationError}</p>}
+                {integrationError && !integrationError.includes("Autenticação") && <p className="modal-error">{integrationError}</p>}
 
                 {!isReadOnly && (
                   <div className="modal-actions">
@@ -5195,9 +5203,9 @@ export function CommercialControl({
                   />
                 </label>
               </div>
-              {bitrixImportError && <p className="modal-error">{bitrixImportError}</p>}
-              {bitrixExportError && <p className="modal-error">{bitrixExportError}</p>}
-              {csvImportError && <p className="modal-error">{csvImportError}</p>}
+              {bitrixImportError && !bitrixImportError.includes("Autenticação") && <p className="modal-error">{bitrixImportError}</p>}
+              {bitrixExportError && !bitrixExportError.includes("Autenticação") && <p className="modal-error">{bitrixExportError}</p>}
+              {csvImportError && !csvImportError.includes("Autenticação") && <p className="modal-error">{csvImportError}</p>}
 
               {bitrixImportItems && (
                 <div className="data-table-wrap">
@@ -5308,7 +5316,7 @@ export function CommercialControl({
                   {leadLoading === "google" ? "Buscando..." : "Buscar no Google"}
                 </button>
               </div>
-              {leadError && <p className="modal-error">{leadError}</p>}
+              {leadError && !leadError.includes("Autenticação") && <p className="modal-error">{leadError}</p>}
               {leadResult && (
                 <div className="lead-result-card">
                   <div>
