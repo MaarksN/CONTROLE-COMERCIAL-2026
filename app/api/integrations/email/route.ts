@@ -10,7 +10,7 @@ export async function POST(req: Request) {
     }
 
     // Mock call to a generic Email API (e.g. Nodemailer/SendGrid)
-    console.log(`Sending Email to ${email} with subject: ${subject}`);
+    console.log(`Sending Email to ${email} with subject: ${subject}. Body length: ${body.length}`);
 
     return NextResponse.json({ success: true, message: 'E-mail enviado com sucesso!' });
   } catch (error: unknown) {

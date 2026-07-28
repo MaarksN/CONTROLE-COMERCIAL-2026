@@ -1635,7 +1635,7 @@ export function CommercialControl({
     }
 
     poll();
-    const interval = setInterval(poll, 9000);
+    const interval = setInterval(poll, 60000);
     return () => {
       cancelled = true;
       controller.abort();
