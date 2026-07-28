@@ -18,6 +18,7 @@ import {
   type ActionItem,
   type ActionStatus,
 } from "../app/deriveDashboard";
+import type { AlertState } from "../app/deriveAlerts";
 
 const SEED_VERSION = "atlas-commercial-2026-v1";
 const STAGE_BACKFILL_KEY = "stage_backfill_v1";
@@ -96,6 +97,7 @@ export type CommercialData = {
   sellers: Seller[];
   actionItems: ActionItem[];
   growthTargets: SellerGrowthTarget[];
+  alertStates: AlertState[];
   objectives: StaticData["objectives"];
   governance: StaticData["governance"];
   dataQualityIssues: StaticData["dataQualityIssues"];
@@ -751,6 +753,82 @@ export async function upsertSellerGrowthTarget(
   return rowToGrowthTarget(row);
 }
 
+type AlertStateRow = {
+  key: string;
+  status: string;
+  justification: string | null;
+  actor_email: string | null;
+  updated_at: string;
+};
+
+const ALERT_STATE_COLUMNS = "key, status, justification, actor_email, updated_at";
+
+function rowToAlertState(row: AlertStateRow): AlertState {
+  return {
+    key: row.key,
+    status: row.status as AlertState["status"],
+    justification: row.justification,
+    actorEmail: row.actor_email,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Same self-healing rationale as `ensureSellerGrowthTargetsTable`: no
+ * migration is auto-applied in production, so the table is created here,
+ * guarded by `IF NOT EXISTS`.
+ */
+async function ensureAlertStateTable(database: D1Database) {
+  await database.prepare(
+    `CREATE TABLE IF NOT EXISTS alert_state (
+      key text PRIMARY KEY NOT NULL,
+      status text DEFAULT 'aberto' NOT NULL,
+      justification text,
+      actor_email text,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    )`,
+  ).run();
+}
+
+export async function readAlertStates(database: D1Database): Promise<AlertState[]> {
+  await ensureAlertStateTable(database);
+  const rows = await database
+    .prepare(`SELECT ${ALERT_STATE_COLUMNS} FROM alert_state ORDER BY updated_at DESC`)
+    .all<AlertStateRow>();
+  return rows.results.map(rowToAlertState);
+}
+
+export async function upsertAlertState(
+  database: D1Database,
+  input: {
+    key: string;
+    status: AlertState["status"];
+    justification: string | null;
+    actorEmail: string;
+  },
+): Promise<AlertState> {
+  await ensureAlertStateTable(database);
+  await database
+    .prepare(
+      `INSERT INTO alert_state (key, status, justification, actor_email, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(key) DO UPDATE SET
+         status = excluded.status,
+         justification = excluded.justification,
+         actor_email = excluded.actor_email,
+         updated_at = CURRENT_TIMESTAMP`,
+    )
+    .bind(input.key, input.status, input.justification, input.actorEmail)
+    .run();
+
+  const row = await database
+    .prepare(`SELECT ${ALERT_STATE_COLUMNS} FROM alert_state WHERE key = ?`)
+    .bind(input.key)
+    .first<AlertStateRow>();
+  if (!row) throw new Error("Falha ao salvar o estado do alerta.");
+  return rowToAlertState(row);
+}
+
 function parsePayloads<T>(rows: D1Row[]): T[] {
   return rows.map((row) => JSON.parse(row.payload_json) as T);
 }
@@ -856,6 +934,7 @@ function buildFromStaticJson(asOf: string): CommercialData {
     sellers,
     actionItems,
     growthTargets: [],
+    alertStates: [],
     objectives: commercialDataJson.objectives,
     governance: commercialDataJson.governance,
     dataQualityIssues: commercialDataJson.dataQualityIssues,
@@ -872,11 +951,12 @@ export async function loadCommercialData(): Promise<CommercialData> {
     // Sequenced: readDealsAndTargets() runs ensureSeeded()/ensureStageBackfill()
     // first, which the objectives/workbook queries below depend on existing.
     const { deals, targets } = await readDealsAndTargets(env.DB);
-    const [sellers, actionItems, growthTargets, objectiveResult, workbookResult] =
+    const [sellers, actionItems, growthTargets, alertStates, objectiveResult, workbookResult] =
       await Promise.all([
         readSellerRoster(env.DB),
         readActionItems(env.DB),
         readSellerGrowthTargets(env.DB),
+        readAlertStates(env.DB),
         env.DB.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>(),
         env.DB.prepare(
           "SELECT sheet_name, row_number, data_json, formula_json FROM workbook_rows ORDER BY id",
@@ -925,6 +1005,7 @@ export async function loadCommercialData(): Promise<CommercialData> {
       sellers,
       actionItems,
       growthTargets,
+      alertStates,
       objectives: parsePayloads<StaticData["objectives"][number]>(objectiveResult.results),
       governance: commercialDataJson.governance,
       dataQualityIssues: commercialDataJson.dataQualityIssues,

@@ -140,6 +140,18 @@ export const sellerGrowthTargets = sqliteTable(
   }),
 );
 
+// Smart Alerts are recomputed live from deals/targets/etc. on every read
+// (see app/deriveAlerts.ts) — only the human interaction with a given alert
+// (dismiss with justification, mark resolved) is persisted here, keyed by
+// the alert's deterministic `key` so state survives recomputation.
+export const alertState = sqliteTable("alert_state", {
+  key: text("key").primaryKey(),
+  status: text("status").notNull().default("aberto"),
+  justification: text("justification"),
+  actorEmail: text("actor_email"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const auditLog = sqliteTable("audit_log", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   actorEmail: text("actor_email").notNull(),
