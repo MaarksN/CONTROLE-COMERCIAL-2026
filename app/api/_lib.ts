@@ -1,8 +1,14 @@
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { STAGES, type Stage } from "@/app/deriveMetrics";
 import { getDb } from "@/db";
+import { resolveCanEdit } from "@/db/commercial-data";
 import { auditLog } from "@/db/schema";
 
+/**
+ * Gates every write route: must be signed in AND hold an editable role in
+ * `user_roles` (checked here, not just in the UI — the UI hiding a button
+ * is not access control by itself; this is what actually enforces it).
+ */
 export async function requireUser() {
   const user = await getChatGPTUser();
   if (!user) {
@@ -14,6 +20,21 @@ export async function requireUser() {
       ),
     };
   }
+
+  const canEdit = await resolveCanEdit(user.email);
+  if (!canEdit) {
+    return {
+      user: null,
+      response: Response.json(
+        {
+          error:
+            "Sua conta não tem permissão de edição. Peça a um administrador para liberar seu acesso em user_roles.",
+        },
+        { status: 403 },
+      ),
+    };
+  }
+
   return { user, response: null };
 }
 
