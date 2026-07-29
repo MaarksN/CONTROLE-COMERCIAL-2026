@@ -14,15 +14,21 @@ export function AssistantWidget({ dataContext }: { dataContext: unknown }) {
     if (!input.trim()) return;
 
     const userMessage = input;
-    setMessages((prev) => [...prev, { role: "user", text: userMessage }]);
+    const newMessages = [...messages, { role: "user" as const, text: userMessage }];
+    setMessages(newMessages);
     setInput("");
     setIsLoading(true);
 
     try {
+      const apiMessages = newMessages.map(msg => ({
+        role: msg.role === "ai" ? "assistant" : "user",
+        content: msg.text
+      }));
+
       const response = await fetch("/api/ai/groq", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: userMessage, dataContext })
+        body: JSON.stringify({ messages: apiMessages, dataContext })
       });
 
       const data = await response.json();
