@@ -1,5 +1,7 @@
 import { isValidDateInput, isValidStage, requireUser, toFiniteNonNegative, toRouteErrorMessage, writeAudit } from "@/app/api/_lib";
 import { MONTH_NAMES } from "@/app/deriveMetrics";
+import { getDb } from "@/db";
+import { commercialDeals } from "@/db/schema";
 import { env } from "cloudflare:workers";
 import { readDealsAndTargets } from "@/db/commercial-data";
 
@@ -105,27 +107,24 @@ export async function POST(request: Request) {
       updatedBy: user.email,
     };
 
-    await env.DB.prepare(
-      "INSERT INTO commercial_deals (id, year, month_number, month, owner, company, origin, sold, adjusted, billed, stage, notes, created_by, updated_by, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-      .bind(
-        deal.id,
-        deal.year,
-        deal.monthNumber,
-        deal.month,
-        deal.owner,
-        deal.company,
-        deal.origin,
-        deal.sold,
-        deal.adjusted,
-        deal.billed,
-        deal.stage,
-        deal.notes,
-        user.email,
-        user.email,
-        JSON.stringify(deal),
-      )
-      .run();
+    const db = getDb();
+    await db.insert(commercialDeals).values({
+      id: deal.id,
+      year: deal.year,
+      monthNumber: deal.monthNumber,
+      month: deal.month,
+      owner: deal.owner,
+      company: deal.company,
+      origin: deal.origin,
+      sold: deal.sold,
+      adjusted: deal.adjusted,
+      billed: deal.billed,
+      stage: deal.stage,
+      notes: deal.notes,
+      createdBy: user.email,
+      updatedBy: user.email,
+      payloadJson: JSON.stringify(deal),
+    }).run();
 
     await writeAudit({
       actorEmail: user.email,

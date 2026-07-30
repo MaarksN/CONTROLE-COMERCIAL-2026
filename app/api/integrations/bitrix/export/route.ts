@@ -1,4 +1,7 @@
 import { requireUser, toRouteErrorMessage, writeAudit } from "@/app/api/_lib";
+import { getDb } from "@/db";
+import { commercialDeals } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { readIntegrationSettings } from "@/db/commercial-data";
 import { callBitrix } from "../_client";
@@ -35,11 +38,11 @@ export async function POST(request: Request) {
 
     for (const dealId of dealIds) {
       try {
-        const row = await env.DB.prepare(
-          "SELECT id, payload_json FROM commercial_deals WHERE id = ?",
-        )
-          .bind(dealId)
-          .first<DealRow>();
+        const db = getDb();
+        const row = await db.select({ id: commercialDeals.id, payload_json: commercialDeals.payloadJson })
+          .from(commercialDeals)
+          .where(eq(commercialDeals.id, dealId))
+          .get();
         if (!row) {
           failed += 1;
           continue;
@@ -59,8 +62,9 @@ export async function POST(request: Request) {
         } else {
           const newId = await callBitrix<number>(webhookUrl, "crm.deal.add", { fields });
           deal.bitrixId = String(newId);
-          await env.DB.prepare("UPDATE commercial_deals SET payload_json = ? WHERE id = ?")
-            .bind(JSON.stringify(deal), dealId)
+          await db.update(commercialDeals)
+            .set({ payloadJson: JSON.stringify(deal) })
+            .where(eq(commercialDeals.id, dealId))
             .run();
           created += 1;
         }

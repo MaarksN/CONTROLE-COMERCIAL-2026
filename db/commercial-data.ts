@@ -19,6 +19,20 @@ import {
   type ActionStatus,
 } from "../app/deriveDashboard";
 import type { AlertState } from "../app/deriveAlerts";
+import { getDb } from "./index";
+import { eq, sql, desc, asc, and } from "drizzle-orm";
+import {
+  appState,
+  monthlyMetrics,
+  commercialDeals,
+  workbookRows,
+  objectives,
+  userRoles,
+  actionItems as actionItemsTable,
+  sellerGrowthTargets as sgtTable,
+  alertState as alertTable,
+  integrationSettings as isettingsTable,
+} from "./schema";
 
 const SEED_VERSION = "atlas-commercial-2026-v1";
 const STAGE_BACKFILL_KEY = "stage_backfill_v1";
@@ -28,22 +42,12 @@ const EXTRA_MONTHS_BACKFILL_KEY = "extra_month_targets_v1";
 const ADMIN_SEED_KEY = "admin_role_seed_v1";
 const BATCH_SIZE = 40;
 
-// Matches governance.roles from the audited workbook: only these role names
-// carry write access. Unknown/unassigned users fall back to the schema's own
-// default role ("Diretoria (leitura)"), which is read-only by design.
 const EDITABLE_ROLES = new Set(
   commercialDataJson.governance.roles.filter((role) => role.edit).map((role) => role.role),
 );
 
-// Seeded once so this account is never locked out by the write-access change
-// below. Additional editors are granted by inserting/updating rows in
-// `user_roles` (role must be one of EDITABLE_ROLES, active = true).
 const DEFAULT_ADMIN_EMAIL = "marcelinmark@gmail.com";
 
-// Targets for the months the original workbook's monthly tabs didn't cover
-// yet (only Jan-Jul had dedicated sheets at import time). Sold/adjusted stay
-// at 0 until the business books results for these months; edit them inline
-// (same as any other month) once they do.
 const EXTRA_MONTH_TARGETS: Array<{ monthNumber: number; month: string; target: number }> = [
   { monthNumber: 8, month: "Agosto", target: 27300 },
   { monthNumber: 9, month: "Setembro", target: 32925 },
@@ -107,205 +111,122 @@ export type CommercialData = {
   rawSheets: StaticData["rawSheets"];
 };
 
-type CommercialDealRow = {
-  id: string;
-  year: number;
-  month_number: number;
-  month: string;
-  owner: string;
-  company: string;
-  origin: string;
-  sold: number;
-  adjusted: number;
-  billed: number;
-  stage: string;
-  notes: string | null;
-  created_by: string | null;
-  updated_by: string | null;
-  created_at: string;
-  updated_at: string;
-  payload_json: string;
-};
-
-type ActionItemRow = {
-  id: string;
-  title: string;
-  description: string;
-  owner: string | null;
-  horizon: string;
-  status: string;
-  source: string | null;
-  created_by: string | null;
-  updated_by: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-function rowToActionItem(row: ActionItemRow): ActionItem {
-  return {
-    id: row.id,
-    title: row.title,
-    description: row.description,
-    owner: row.owner,
-    horizon: row.horizon as ActionHorizon,
-    status: row.status as ActionStatus,
-    source: row.source,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    createdBy: row.created_by,
-    updatedBy: row.updated_by,
-  };
-}
-
-const ACTION_ITEM_COLUMNS =
-  "id, title, description, owner, horizon, status, source, created_by, updated_by, created_at, updated_at";
-
-type TargetRow = {
-  year: number;
-  month_number: number;
-  month: string;
-  target: number;
-  sold: number;
-  adjusted: number;
-};
-type D1Row = { payload_json: string };
-type WorkbookRow = {
-  sheet_name: string;
-  row_number: number;
-  data_json: string;
-  formula_json: string;
-};
-
-async function runBatches(database: D1Database, statements: D1PreparedStatement[]) {
-  for (let index = 0; index < statements.length; index += BATCH_SIZE) {
-    await database.batch(statements.slice(index, index + BATCH_SIZE));
-  }
-}
-
 async function ensureSeeded(database: D1Database) {
-  const current = await database
-    .prepare("SELECT value FROM app_state WHERE key = ?")
-    .bind("seed_version")
-    .first<{ value: string }>();
+  const db = getDb();
+  const current = await db
+    .select({ value: appState.value })
+    .from(appState)
+    .where(eq(appState.key, "seed_version"))
+    .get();
 
   if (current?.value === SEED_VERSION) return;
 
-  await database.batch([
-    database.prepare("DELETE FROM monthly_metrics"),
-    database.prepare("DELETE FROM commercial_deals"),
-    database.prepare("DELETE FROM workbook_rows"),
-    database.prepare("DELETE FROM objectives"),
-  ]);
+  await db.delete(monthlyMetrics);
+  await db.delete(commercialDeals);
+  await db.delete(workbookRows);
+  await db.delete(objectives);
 
-  await runBatches(
-    database,
-    commercialDataJson.monthlyMetrics.map((metric) =>
-      database
-        .prepare(
-          "INSERT INTO monthly_metrics (year, month_number, month, target, sold, adjusted, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(
-          2026,
-          metric.monthNumber,
-          metric.month,
-          metric.target,
-          metric.sold,
-          metric.adjusted,
-          JSON.stringify(metric),
-        ),
-    ),
-  );
+  for (let index = 0; index < commercialDataJson.monthlyMetrics.length; index += BATCH_SIZE) {
+    const batch = commercialDataJson.monthlyMetrics.slice(index, index + BATCH_SIZE);
+    if (batch.length > 0) {
+      await db.insert(monthlyMetrics).values(
+        batch.map((metric) => ({
+          year: 2026,
+          monthNumber: metric.monthNumber,
+          month: metric.month,
+          target: metric.target,
+          sold: metric.sold,
+          adjusted: metric.adjusted,
+          payloadJson: JSON.stringify(metric),
+        })),
+      );
+    }
+  }
 
-  await runBatches(
-    database,
-    commercialDataJson.deals2026.map((deal) =>
-      database
-        .prepare(
-          "INSERT INTO commercial_deals (id, year, month_number, month, owner, company, origin, sold, adjusted, billed, stage, created_by, updated_by, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(
-          deal.id,
-          deal.year,
-          deal.monthNumber,
-          deal.month,
-          deal.owner,
-          deal.company,
-          deal.origin,
-          deal.sold,
-          deal.adjusted,
-          deal.billed,
-          inferStage(deal),
-          "import",
-          "import",
-          JSON.stringify(deal),
-        ),
-    ),
-  );
+  for (let index = 0; index < commercialDataJson.deals2026.length; index += BATCH_SIZE) {
+    const batch = commercialDataJson.deals2026.slice(index, index + BATCH_SIZE);
+    if (batch.length > 0) {
+      await db.insert(commercialDeals).values(
+        batch.map((deal) => ({
+          id: deal.id,
+          year: deal.year,
+          monthNumber: deal.monthNumber,
+          month: deal.month,
+          owner: deal.owner,
+          company: deal.company,
+          origin: deal.origin,
+          sold: deal.sold,
+          adjusted: deal.adjusted,
+          billed: deal.billed,
+          stage: inferStage(deal),
+          createdBy: "import",
+          updatedBy: "import",
+          payloadJson: JSON.stringify(deal),
+        })),
+      );
+    }
+  }
 
   const workbookStatements = commercialDataJson.rawSheets.flatMap((sheet) =>
-    sheet.rows.map((row, index) =>
-      database
-        .prepare(
-          "INSERT INTO workbook_rows (sheet_name, row_number, data_json, formula_json) VALUES (?, ?, ?, ?)",
-        )
-        .bind(
-          sheet.name,
-          index + 1,
-          JSON.stringify(row),
-          JSON.stringify(sheet.formulas[index] ?? []),
-        ),
-    ),
+    sheet.rows.map((row, index) => ({
+      sheetName: sheet.name,
+      rowNumber: index + 1,
+      dataJson: JSON.stringify(row),
+      formulaJson: JSON.stringify(sheet.formulas[index] ?? []),
+    })),
   );
-  await runBatches(database, workbookStatements);
+  for (let index = 0; index < workbookStatements.length; index += BATCH_SIZE) {
+    const batch = workbookStatements.slice(index, index + BATCH_SIZE);
+    if (batch.length > 0) {
+      await db.insert(workbookRows).values(batch);
+    }
+  }
 
-  await runBatches(
-    database,
-    commercialDataJson.objectives.map((objective) =>
-      database
-        .prepare(
-          "INSERT INTO objectives (id, title, owner, progress, payload_json) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(
-          objective.id,
-          objective.title,
-          objective.owner,
-          objective.progress,
-          JSON.stringify(objective),
-        ),
-    ),
-  );
+  for (let index = 0; index < commercialDataJson.objectives.length; index += BATCH_SIZE) {
+    const batch = commercialDataJson.objectives.slice(index, index + BATCH_SIZE);
+    if (batch.length > 0) {
+      await db.insert(objectives).values(
+        batch.map((objective) => ({
+          id: objective.id,
+          title: objective.title,
+          owner: objective.owner,
+          progress: objective.progress,
+          payloadJson: JSON.stringify(objective),
+        })),
+      );
+    }
+  }
 
-  await database
-    .prepare(
-      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind("seed_version", SEED_VERSION)
-    .run();
+  await db
+    .insert(appState)
+    .values({ key: "seed_version", value: SEED_VERSION, updatedAt: sql`CURRENT_TIMESTAMP` })
+    .onConflictDoUpdate({
+      target: appState.key,
+      set: { value: sql`excluded.value`, updatedAt: sql`CURRENT_TIMESTAMP` },
+    });
 }
 
-/**
- * Additive, non-destructive backfill: `ALTER TABLE ... ADD COLUMN stage
- * DEFAULT 'aberto'` sets every pre-existing row to "aberto" regardless of
- * its actual billing state. This runs once (guarded by its own app_state
- * key, never `SEED_VERSION`) to recompute the correct stage for rows that
- * predate the stage column, without ever touching the destructive
- * delete-and-reinsert path in `ensureSeeded` — that path must stay
- * untouched once real user-created deals can exist in the table.
- */
 async function ensureStageBackfill(database: D1Database) {
-  const current = await database
-    .prepare("SELECT value FROM app_state WHERE key = ?")
-    .bind(STAGE_BACKFILL_KEY)
-    .first<{ value: string }>();
+  const db = getDb();
+  const current = await db
+    .select({ value: appState.value })
+    .from(appState)
+    .where(eq(appState.key, STAGE_BACKFILL_KEY))
+    .get();
 
   if (current?.value === "done") return;
 
-  const rows = await database
-    .prepare("SELECT id, billed, payload_json FROM commercial_deals")
-    .all<{ id: string; billed: number; payload_json: string }>();
+  const rows = await db
+    .select({
+      id: commercialDeals.id,
+      billed: commercialDeals.billed,
+      payloadJson: commercialDeals.payloadJson,
+    })
+    .from(commercialDeals)
+    .all();
 
-  const statements = rows.results.map((row) => {
-    const extra = JSON.parse(row.payload_json) as {
+  for (const row of rows) {
+    const extra = JSON.parse(row.payloadJson) as {
       contractSigned?: string;
       contractSignedAt?: string | null;
       billingStatus?: string;
@@ -316,96 +237,90 @@ async function ensureStageBackfill(database: D1Database) {
       contractSignedAt: extra.contractSignedAt,
       billingStatus: extra.billingStatus,
     });
-    return database
-      .prepare("UPDATE commercial_deals SET stage = ? WHERE id = ?")
-      .bind(stage, row.id);
-  });
-  await runBatches(database, statements);
+    await db.update(commercialDeals).set({ stage }).where(eq(commercialDeals.id, row.id));
+  }
 
-  await database
-    .prepare(
-      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind(STAGE_BACKFILL_KEY, "done")
-    .run();
+  await db
+    .insert(appState)
+    .values({ key: STAGE_BACKFILL_KEY, value: "done", updatedAt: sql`CURRENT_TIMESTAMP` })
+    .onConflictDoUpdate({
+      target: appState.key,
+      set: { value: sql`excluded.value`, updatedAt: sql`CURRENT_TIMESTAMP` },
+    });
 }
 
-/**
- * Additive: the original workbook only had monthly tabs through July, so
- * `ensureSeeded()` never inserts Aug-Dec targets. This backfills them once
- * (guarded by its own app_state key, never `SEED_VERSION`) so the full year
- * shows up in the monthly table/selectors — sold/adjusted start at 0 until
- * the business books results for those months.
- */
 async function ensureExtraMonthTargets(database: D1Database) {
-  const current = await database
-    .prepare("SELECT value FROM app_state WHERE key = ?")
-    .bind(EXTRA_MONTHS_BACKFILL_KEY)
-    .first<{ value: string }>();
+  const db = getDb();
+  const current = await db
+    .select({ value: appState.value })
+    .from(appState)
+    .where(eq(appState.key, EXTRA_MONTHS_BACKFILL_KEY))
+    .get();
   if (current) return;
 
-  await runBatches(
-    database,
-    EXTRA_MONTH_TARGETS.map((entry) =>
-      database
-        .prepare(
-          "INSERT INTO monthly_metrics (year, month_number, month, target, sold, adjusted, payload_json) VALUES (?, ?, ?, ?, 0, 0, '{}') ON CONFLICT(year, month_number) DO NOTHING",
+  for (let index = 0; index < EXTRA_MONTH_TARGETS.length; index += BATCH_SIZE) {
+    const batch = EXTRA_MONTH_TARGETS.slice(index, index + BATCH_SIZE);
+    if (batch.length > 0) {
+      await db
+        .insert(monthlyMetrics)
+        .values(
+          batch.map((entry) => ({
+            year: 2026,
+            monthNumber: entry.monthNumber,
+            month: entry.month,
+            target: entry.target,
+            sold: 0,
+            adjusted: 0,
+            payloadJson: "{}",
+          })),
         )
-        .bind(2026, entry.monthNumber, entry.month, entry.target),
-    ),
-  );
+        .onConflictDoNothing({ target: [monthlyMetrics.year, monthlyMetrics.monthNumber] });
+    }
+  }
 
-  await database
-    .prepare(
-      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
-    )
-    .bind(EXTRA_MONTHS_BACKFILL_KEY, "done")
-    .run();
+  await db
+    .insert(appState)
+    .values({ key: EXTRA_MONTHS_BACKFILL_KEY, value: "done", updatedAt: sql`CURRENT_TIMESTAMP` })
+    .onConflictDoNothing({ target: appState.key });
 }
 
-/**
- * Additive: grants DEFAULT_ADMIN_EMAIL the "Administrador" role once, so
- * turning on role-gated write access never locks out the one account that
- * needs it. Never re-runs (own app_state key), so it won't fight an admin
- * who later changes/revokes this role on purpose.
- */
 async function ensureAdminRoleSeed(database: D1Database) {
-  const current = await database
-    .prepare("SELECT value FROM app_state WHERE key = ?")
-    .bind(ADMIN_SEED_KEY)
-    .first<{ value: string }>();
+  const db = getDb();
+  const current = await db
+    .select({ value: appState.value })
+    .from(appState)
+    .where(eq(appState.key, ADMIN_SEED_KEY))
+    .get();
   if (current) return;
 
-  await database
-    .prepare(
-      "INSERT INTO user_roles (email, role, active, updated_at) VALUES (?, ?, 1, CURRENT_TIMESTAMP) ON CONFLICT(email) DO NOTHING",
-    )
-    .bind(DEFAULT_ADMIN_EMAIL, "Administrador")
-    .run();
+  await db
+    .insert(userRoles)
+    .values({
+      email: DEFAULT_ADMIN_EMAIL,
+      role: "Administrador",
+      active: true,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .onConflictDoNothing({ target: userRoles.email });
 
-  await database
-    .prepare(
-      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
-    )
-    .bind(ADMIN_SEED_KEY, "done")
-    .run();
+  await db
+    .insert(appState)
+    .values({ key: ADMIN_SEED_KEY, value: "done", updatedAt: sql`CURRENT_TIMESTAMP` })
+    .onConflictDoNothing({ target: appState.key });
 }
 
-/**
- * Write access is gated by `user_roles`, not merely by being signed in.
- * Unknown emails (no row yet) default to read-only, matching the schema's
- * own default role ("Diretoria (leitura)"). Locally (`env.DB` unavailable)
- * there is no real SIWC session anyway, so this only matters when deployed.
- */
 export async function resolveCanEdit(email: string | null): Promise<boolean> {
   if (!email) return false;
   if (!env.DB) return true;
 
   try {
     await ensureAdminRoleSeed(env.DB);
-    const row = await env.DB.prepare("SELECT role, active FROM user_roles WHERE email = ?")
-      .bind(email)
-      .first<{ role: string; active: number }>();
+    const db = getDb();
+    const row = await db
+      .select({ role: userRoles.role, active: userRoles.active })
+      .from(userRoles)
+      .where(eq(userRoles.email, email))
+      .get();
     if (!row || !row.active) return false;
     return EDITABLE_ROLES.has(row.role);
   } catch {
@@ -413,32 +328,33 @@ export async function resolveCanEdit(email: string | null): Promise<boolean> {
   }
 }
 
-/**
- * Additive: seeds the team roster only if the `app_state` key doesn't exist
- * yet — never overwrites, so sellers added later via `POST /api/sellers`
- * are never clobbered by a redeploy.
- */
 async function ensureSellerRoster(database: D1Database) {
-  const current = await database
-    .prepare("SELECT value FROM app_state WHERE key = ?")
-    .bind(SELLER_ROSTER_KEY)
-    .first<{ value: string }>();
+  const db = getDb();
+  const current = await db
+    .select({ value: appState.value })
+    .from(appState)
+    .where(eq(appState.key, SELLER_ROSTER_KEY))
+    .get();
   if (current) return;
 
-  await database
-    .prepare(
-      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
-    )
-    .bind(SELLER_ROSTER_KEY, JSON.stringify(defaultSellerRoster()))
-    .run();
+  await db
+    .insert(appState)
+    .values({
+      key: SELLER_ROSTER_KEY,
+      value: JSON.stringify(defaultSellerRoster()),
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .onConflictDoNothing({ target: appState.key });
 }
 
 export async function readSellerRoster(database: D1Database): Promise<Seller[]> {
   await ensureSellerRoster(database);
-  const row = await database
-    .prepare("SELECT value FROM app_state WHERE key = ?")
-    .bind(SELLER_ROSTER_KEY)
-    .first<{ value: string }>();
+  const db = getDb();
+  const row = await db
+    .select({ value: appState.value })
+    .from(appState)
+    .where(eq(appState.key, SELLER_ROSTER_KEY))
+    .get();
   if (!row) return [];
   try {
     return JSON.parse(row.value) as Seller[];
@@ -448,8 +364,11 @@ export async function readSellerRoster(database: D1Database): Promise<Seller[]> 
 }
 
 export async function addSellerToRoster(database: D1Database, seller: Seller): Promise<Seller[]> {
+  const db = getDb();
   const roster = await readSellerRoster(database);
-  const exists = roster.some((item) => item.name.toLocaleLowerCase("pt-BR") === seller.name.toLocaleLowerCase("pt-BR"));
+  const exists = roster.some(
+    (item) => item.name.toLocaleLowerCase("pt-BR") === seller.name.toLocaleLowerCase("pt-BR"),
+  );
   const next = exists
     ? roster.map((item) =>
         item.name.toLocaleLowerCase("pt-BR") === seller.name.toLocaleLowerCase("pt-BR")
@@ -458,98 +377,99 @@ export async function addSellerToRoster(database: D1Database, seller: Seller): P
       )
     : [...roster, seller];
 
-  await database
-    .prepare(
-      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
-    )
-    .bind(SELLER_ROSTER_KEY, JSON.stringify(next))
-    .run();
+  await db
+    .insert(appState)
+    .values({
+      key: SELLER_ROSTER_KEY,
+      value: JSON.stringify(next),
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .onConflictDoUpdate({
+      target: appState.key,
+      set: { value: sql`excluded.value`, updatedAt: sql`CURRENT_TIMESTAMP` },
+    });
 
   return next;
 }
 
-/**
- * Additive: seeds the action plan from the Bitrix24 90-day roadmap only once
- * (guarded by its own app_state key). Never re-runs, so items created or
- * edited later by users are never overwritten by a redeploy.
- */
-/**
- * This project has no wrangler.jsonc / migrations_dir wiring, so drizzle
- * migrations are generated but never auto-applied to the local D1 database
- * (`npm run db:generate` only writes the SQL file). Creating the table here,
- * guarded by `IF NOT EXISTS`, makes the action plan self-healing regardless
- * of whether the migration was actually run against this environment's D1.
- */
 async function ensureActionItemsTable(database: D1Database) {
-  await database.batch([
-    database.prepare(
-      `CREATE TABLE IF NOT EXISTS action_items (
-        id text PRIMARY KEY NOT NULL,
-        title text NOT NULL,
-        description text DEFAULT '' NOT NULL,
-        owner text,
-        horizon text DEFAULT 'h1' NOT NULL,
-        status text DEFAULT 'pendente' NOT NULL,
-        source text,
-        created_by text,
-        updated_by text,
-        created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
-      )`,
-    ),
-    database.prepare(
-      "CREATE INDEX IF NOT EXISTS action_items_status_idx ON action_items (status)",
-    ),
-    database.prepare(
-      "CREATE INDEX IF NOT EXISTS action_items_horizon_idx ON action_items (horizon)",
-    ),
-  ]);
+  const db = getDb();
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS action_items (
+      id text PRIMARY KEY NOT NULL,
+      title text NOT NULL,
+      description text DEFAULT '' NOT NULL,
+      owner text,
+      horizon text DEFAULT 'h1' NOT NULL,
+      status text DEFAULT 'pendente' NOT NULL,
+      source text,
+      created_by text,
+      updated_by text,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    )
+  `);
+  await db.run(sql`CREATE INDEX IF NOT EXISTS action_items_status_idx ON action_items (status)`);
+  await db.run(sql`CREATE INDEX IF NOT EXISTS action_items_horizon_idx ON action_items (horizon)`);
 }
 
 async function ensureActionItemsSeed(database: D1Database) {
   await ensureActionItemsTable(database);
+  const db = getDb();
 
-  const current = await database
-    .prepare("SELECT value FROM app_state WHERE key = ?")
-    .bind(ACTION_ITEMS_SEED_KEY)
-    .first<{ value: string }>();
+  const current = await db
+    .select({ value: appState.value })
+    .from(appState)
+    .where(eq(appState.key, ACTION_ITEMS_SEED_KEY))
+    .get();
   if (current) return;
 
-  await runBatches(
-    database,
-    DEFAULT_ACTION_PLAN.map((item) =>
-      database
-        .prepare(
-          `INSERT INTO action_items (${ACTION_ITEM_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-        )
-        .bind(
-          crypto.randomUUID(),
-          item.title,
-          item.description,
-          item.owner,
-          item.horizon,
-          "pendente",
-          item.source,
-          "import",
-          "import",
-        ),
-    ),
-  );
+  for (let index = 0; index < DEFAULT_ACTION_PLAN.length; index += BATCH_SIZE) {
+    const batch = DEFAULT_ACTION_PLAN.slice(index, index + BATCH_SIZE);
+    if (batch.length > 0) {
+      await db.insert(actionItemsTable).values(
+        batch.map((item) => ({
+          id: crypto.randomUUID(),
+          title: item.title,
+          description: item.description,
+          owner: item.owner,
+          horizon: item.horizon,
+          status: "pendente",
+          source: item.source,
+          createdBy: "import",
+          updatedBy: "import",
+        })),
+      );
+    }
+  }
 
-  await database
-    .prepare(
-      "INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO NOTHING",
-    )
-    .bind(ACTION_ITEMS_SEED_KEY, "done")
-    .run();
+  await db
+    .insert(appState)
+    .values({ key: ACTION_ITEMS_SEED_KEY, value: "done", updatedAt: sql`CURRENT_TIMESTAMP` })
+    .onConflictDoNothing({ target: appState.key });
 }
 
 export async function readActionItems(database: D1Database): Promise<ActionItem[]> {
   await ensureActionItemsSeed(database);
-  const rows = await database
-    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items ORDER BY horizon, created_at`)
-    .all<ActionItemRow>();
-  return rows.results.map(rowToActionItem);
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(actionItemsTable)
+    .orderBy(asc(actionItemsTable.horizon), asc(actionItemsTable.createdAt))
+    .all();
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    owner: row.owner,
+    horizon: row.horizon as ActionHorizon,
+    status: row.status as ActionStatus,
+    source: row.source,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    createdBy: row.createdBy,
+    updatedBy: row.updatedBy,
+  }));
 }
 
 export async function addActionItem(
@@ -564,30 +484,38 @@ export async function addActionItem(
   },
 ): Promise<ActionItem> {
   await ensureActionItemsTable(database);
+  const db = getDb();
   const id = crypto.randomUUID();
-  await database
-    .prepare(
-      `INSERT INTO action_items (${ACTION_ITEM_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-    )
-    .bind(
-      id,
-      input.title,
-      input.description,
-      input.owner,
-      input.horizon,
-      "pendente",
-      input.source,
-      input.actorEmail,
-      input.actorEmail,
-    )
-    .run();
 
-  const row = await database
-    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
-    .bind(id)
-    .first<ActionItemRow>();
+  await db
+    .insert(actionItemsTable)
+    .values({
+      id,
+      title: input.title,
+      description: input.description,
+      owner: input.owner,
+      horizon: input.horizon,
+      status: "pendente",
+      source: input.source,
+      createdBy: input.actorEmail,
+      updatedBy: input.actorEmail,
+    });
+
+  const row = await db.select().from(actionItemsTable).where(eq(actionItemsTable.id, id)).get();
   if (!row) throw new Error("Falha ao criar item do plano de ação.");
-  return rowToActionItem(row);
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    owner: row.owner,
+    horizon: row.horizon as ActionHorizon,
+    status: row.status as ActionStatus,
+    source: row.source,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    createdBy: row.createdBy,
+    updatedBy: row.updatedBy,
+  };
 }
 
 export async function updateActionItem(
@@ -603,109 +531,113 @@ export async function updateActionItem(
   actorEmail: string,
 ): Promise<ActionItem | null> {
   await ensureActionItemsTable(database);
-  const existing = await database
-    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
-    .bind(id)
-    .first<ActionItemRow>();
+  const db = getDb();
+  const existing = await db
+    .select()
+    .from(actionItemsTable)
+    .where(eq(actionItemsTable.id, id))
+    .get();
   if (!existing) return null;
 
-  const next = {
-    title: patch.title ?? existing.title,
-    description: patch.description ?? existing.description,
-    owner: patch.owner !== undefined ? patch.owner : existing.owner,
-    horizon: patch.horizon ?? existing.horizon,
-    status: patch.status ?? existing.status,
-  };
+  await db
+    .update(actionItemsTable)
+    .set({
+      title: patch.title ?? existing.title,
+      description: patch.description ?? existing.description,
+      owner: patch.owner !== undefined ? patch.owner : existing.owner,
+      horizon: patch.horizon ?? existing.horizon,
+      status: patch.status ?? existing.status,
+      updatedBy: actorEmail,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .where(eq(actionItemsTable.id, id));
 
-  await database
-    .prepare(
-      "UPDATE action_items SET title = ?, description = ?, owner = ?, horizon = ?, status = ?, updated_by = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-    )
-    .bind(next.title, next.description, next.owner, next.horizon, next.status, actorEmail, id)
-    .run();
-
-  const row = await database
-    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
-    .bind(id)
-    .first<ActionItemRow>();
-  return row ? rowToActionItem(row) : null;
-}
-
-export async function deleteActionItem(database: D1Database, id: string): Promise<ActionItem | null> {
-  await ensureActionItemsTable(database);
-  const existing = await database
-    .prepare(`SELECT ${ACTION_ITEM_COLUMNS} FROM action_items WHERE id = ?`)
-    .bind(id)
-    .first<ActionItemRow>();
-  if (!existing) return null;
-  await database.prepare("DELETE FROM action_items WHERE id = ?").bind(id).run();
-  return rowToActionItem(existing);
-}
-
-type SellerGrowthTargetRow = {
-  owner: string;
-  year: number;
-  month_number: number;
-  month: string;
-  entry_target: number;
-  realized_target: number;
-};
-
-const GROWTH_TARGET_COLUMNS = "owner, year, month_number, month, entry_target, realized_target";
-
-function rowToGrowthTarget(row: SellerGrowthTargetRow): SellerGrowthTarget {
+  const row = await db.select().from(actionItemsTable).where(eq(actionItemsTable.id, id)).get();
+  if (!row) return null;
   return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    owner: row.owner,
+    horizon: row.horizon as ActionHorizon,
+    status: row.status as ActionStatus,
+    source: row.source,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    createdBy: row.createdBy,
+    updatedBy: row.updatedBy,
+  };
+}
+
+export async function deleteActionItem(
+  database: D1Database,
+  id: string,
+): Promise<ActionItem | null> {
+  await ensureActionItemsTable(database);
+  const db = getDb();
+  const existing = await db
+    .select()
+    .from(actionItemsTable)
+    .where(eq(actionItemsTable.id, id))
+    .get();
+  if (!existing) return null;
+  await db.delete(actionItemsTable).where(eq(actionItemsTable.id, id));
+  return {
+    id: existing.id,
+    title: existing.title,
+    description: existing.description,
+    owner: existing.owner,
+    horizon: existing.horizon as ActionHorizon,
+    status: existing.status as ActionStatus,
+    source: existing.source,
+    createdAt: existing.createdAt,
+    updatedAt: existing.updatedAt,
+    createdBy: existing.createdBy,
+    updatedBy: existing.updatedBy,
+  };
+}
+
+async function ensureSellerGrowthTargetsTable(database: D1Database) {
+  const db = getDb();
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS seller_growth_targets (
+      id text PRIMARY KEY NOT NULL,
+      owner text NOT NULL,
+      year integer NOT NULL,
+      month_number integer NOT NULL,
+      month text NOT NULL,
+      entry_target real DEFAULT 0 NOT NULL,
+      realized_target real DEFAULT 0 NOT NULL,
+      created_by text,
+      updated_by text,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    )
+  `);
+  await db.run(
+    sql`CREATE UNIQUE INDEX IF NOT EXISTS seller_growth_targets_owner_year_month_unique ON seller_growth_targets (owner, year, month_number)`,
+  );
+  await db.run(
+    sql`CREATE INDEX IF NOT EXISTS seller_growth_targets_owner_idx ON seller_growth_targets (owner)`,
+  );
+}
+
+export async function readSellerGrowthTargets(database: D1Database): Promise<SellerGrowthTarget[]> {
+  await ensureSellerGrowthTargetsTable(database);
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(sgtTable)
+    .orderBy(asc(sgtTable.owner), asc(sgtTable.year), asc(sgtTable.monthNumber))
+    .all();
+  return rows.map((row) => ({
     owner: row.owner,
     year: row.year,
-    monthNumber: row.month_number,
+    monthNumber: row.monthNumber,
     month: row.month,
-    entryTarget: row.entry_target,
-    realizedTarget: row.realized_target,
-  };
-}
-
-/**
- * Same self-healing rationale as `ensureActionItemsTable`: this project has
- * no auto-applied migrations, so the table is created here, guarded by
- * `IF NOT EXISTS`, regardless of whether `npm run db:generate`'s SQL file
- * was actually run against this environment's D1.
- */
-async function ensureSellerGrowthTargetsTable(database: D1Database) {
-  await database.batch([
-    database.prepare(
-      `CREATE TABLE IF NOT EXISTS seller_growth_targets (
-        id text PRIMARY KEY NOT NULL,
-        owner text NOT NULL,
-        year integer NOT NULL,
-        month_number integer NOT NULL,
-        month text NOT NULL,
-        entry_target real DEFAULT 0 NOT NULL,
-        realized_target real DEFAULT 0 NOT NULL,
-        created_by text,
-        updated_by text,
-        created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
-        updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
-      )`,
-    ),
-    database.prepare(
-      "CREATE UNIQUE INDEX IF NOT EXISTS seller_growth_targets_owner_year_month_unique ON seller_growth_targets (owner, year, month_number)",
-    ),
-    database.prepare(
-      "CREATE INDEX IF NOT EXISTS seller_growth_targets_owner_idx ON seller_growth_targets (owner)",
-    ),
-  ]);
-}
-
-export async function readSellerGrowthTargets(
-  database: D1Database,
-): Promise<SellerGrowthTarget[]> {
-  await ensureSellerGrowthTargetsTable(database);
-  const rows = await database
-    .prepare(
-      `SELECT ${GROWTH_TARGET_COLUMNS} FROM seller_growth_targets ORDER BY owner, year, month_number`,
-    )
-    .all<SellerGrowthTargetRow>();
-  return rows.results.map(rowToGrowthTarget);
+    entryTarget: row.entryTarget,
+    realizedTarget: row.realizedTarget,
+  }));
 }
 
 export async function upsertSellerGrowthTarget(
@@ -721,84 +653,78 @@ export async function upsertSellerGrowthTarget(
   },
 ): Promise<SellerGrowthTarget> {
   await ensureSellerGrowthTargetsTable(database);
+  const db = getDb();
   const id = `${input.owner}-${input.year}-${input.monthNumber}`;
 
-  await database
-    .prepare(
-      `INSERT INTO seller_growth_targets (id, owner, year, month_number, month, entry_target, realized_target, created_by, updated_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-       ON CONFLICT(owner, year, month_number) DO UPDATE SET
-         entry_target = excluded.entry_target,
-         realized_target = excluded.realized_target,
-         updated_by = excluded.updated_by,
-         updated_at = CURRENT_TIMESTAMP`,
-    )
-    .bind(
+  await db
+    .insert(sgtTable)
+    .values({
       id,
-      input.owner,
-      input.year,
-      input.monthNumber,
-      input.month,
-      input.entryTarget,
-      input.realizedTarget,
-      input.actorEmail,
-      input.actorEmail,
-    )
-    .run();
+      owner: input.owner,
+      year: input.year,
+      monthNumber: input.monthNumber,
+      month: input.month,
+      entryTarget: input.entryTarget,
+      realizedTarget: input.realizedTarget,
+      createdBy: input.actorEmail,
+      updatedBy: input.actorEmail,
+    })
+    .onConflictDoUpdate({
+      target: [sgtTable.owner, sgtTable.year, sgtTable.monthNumber],
+      set: {
+        entryTarget: sql`excluded.entry_target`,
+        realizedTarget: sql`excluded.realized_target`,
+        updatedBy: sql`excluded.updated_by`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      },
+    });
 
-  const row = await database
-    .prepare(
-      `SELECT ${GROWTH_TARGET_COLUMNS} FROM seller_growth_targets WHERE owner = ? AND year = ? AND month_number = ?`,
+  const row = await db
+    .select()
+    .from(sgtTable)
+    .where(
+      and(
+        eq(sgtTable.owner, input.owner),
+        eq(sgtTable.year, input.year),
+        eq(sgtTable.monthNumber, input.monthNumber),
+      ),
     )
-    .bind(input.owner, input.year, input.monthNumber)
-    .first<SellerGrowthTargetRow>();
+    .get();
   if (!row) throw new Error("Falha ao salvar a meta de crescimento.");
-  return rowToGrowthTarget(row);
-}
-
-type AlertStateRow = {
-  key: string;
-  status: string;
-  justification: string | null;
-  actor_email: string | null;
-  updated_at: string;
-};
-
-const ALERT_STATE_COLUMNS = "key, status, justification, actor_email, updated_at";
-
-function rowToAlertState(row: AlertStateRow): AlertState {
   return {
-    key: row.key,
-    status: row.status as AlertState["status"],
-    justification: row.justification,
-    actorEmail: row.actor_email,
-    updatedAt: row.updated_at,
+    owner: row.owner,
+    year: row.year,
+    monthNumber: row.monthNumber,
+    month: row.month,
+    entryTarget: row.entryTarget,
+    realizedTarget: row.realizedTarget,
   };
 }
 
-/**
- * Same self-healing rationale as `ensureSellerGrowthTargetsTable`: no
- * migration is auto-applied in production, so the table is created here,
- * guarded by `IF NOT EXISTS`.
- */
 async function ensureAlertStateTable(database: D1Database) {
-  await database.prepare(
-    `CREATE TABLE IF NOT EXISTS alert_state (
+  const db = getDb();
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS alert_state (
       key text PRIMARY KEY NOT NULL,
       status text DEFAULT 'aberto' NOT NULL,
       justification text,
       actor_email text,
       updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
-    )`,
-  ).run();
+    )
+  `);
 }
 
 export async function readAlertStates(database: D1Database): Promise<AlertState[]> {
   await ensureAlertStateTable(database);
-  const rows = await database
-    .prepare(`SELECT ${ALERT_STATE_COLUMNS} FROM alert_state ORDER BY updated_at DESC`)
-    .all<AlertStateRow>();
-  return rows.results.map(rowToAlertState);
+  const db = getDb();
+  const rows = await db.select().from(alertTable).orderBy(desc(alertTable.updatedAt)).all();
+  return rows.map((row) => ({
+    key: row.key,
+    status: row.status as AlertState["status"],
+    justification: row.justification,
+    actorEmail: row.actorEmail,
+    updatedAt: row.updatedAt,
+  }));
 }
 
 export async function upsertAlertState(
@@ -811,25 +737,36 @@ export async function upsertAlertState(
   },
 ): Promise<AlertState> {
   await ensureAlertStateTable(database);
-  await database
-    .prepare(
-      `INSERT INTO alert_state (key, status, justification, actor_email, updated_at)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(key) DO UPDATE SET
-         status = excluded.status,
-         justification = excluded.justification,
-         actor_email = excluded.actor_email,
-         updated_at = CURRENT_TIMESTAMP`,
-    )
-    .bind(input.key, input.status, input.justification, input.actorEmail)
-    .run();
+  const db = getDb();
 
-  const row = await database
-    .prepare(`SELECT ${ALERT_STATE_COLUMNS} FROM alert_state WHERE key = ?`)
-    .bind(input.key)
-    .first<AlertStateRow>();
+  await db
+    .insert(alertTable)
+    .values({
+      key: input.key,
+      status: input.status,
+      justification: input.justification,
+      actorEmail: input.actorEmail,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .onConflictDoUpdate({
+      target: alertTable.key,
+      set: {
+        status: sql`excluded.status`,
+        justification: sql`excluded.justification`,
+        actorEmail: sql`excluded.actor_email`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      },
+    });
+
+  const row = await db.select().from(alertTable).where(eq(alertTable.key, input.key)).get();
   if (!row) throw new Error("Falha ao salvar o estado do alerta.");
-  return rowToAlertState(row);
+  return {
+    key: row.key,
+    status: row.status as AlertState["status"],
+    justification: row.justification,
+    actorEmail: row.actorEmail,
+    updatedAt: row.updatedAt,
+  };
 }
 
 export type IntegrationSettings = {
@@ -843,20 +780,6 @@ export type IntegrationSettings = {
   updatedAt: string;
 };
 
-type IntegrationSettingsRow = {
-  bitrix_webhook_url: string | null;
-  apollo_api_key: string | null;
-  google_api_key: string | null;
-  ai_provider: string;
-  openai_api_key: string | null;
-  anthropic_api_key: string | null;
-  updated_by: string | null;
-  updated_at: string;
-};
-
-const INTEGRATION_SETTINGS_COLUMNS =
-  "bitrix_webhook_url, apollo_api_key, google_api_key, ai_provider, openai_api_key, anthropic_api_key, updated_by, updated_at";
-
 const EMPTY_INTEGRATION_SETTINGS: IntegrationSettings = {
   bitrixWebhookUrl: null,
   apolloApiKey: null,
@@ -868,30 +791,10 @@ const EMPTY_INTEGRATION_SETTINGS: IntegrationSettings = {
   updatedAt: new Date(0).toISOString(),
 };
 
-function rowToIntegrationSettings(row: IntegrationSettingsRow): IntegrationSettings {
-  return {
-    bitrixWebhookUrl: row.bitrix_webhook_url,
-    apolloApiKey: row.apollo_api_key,
-    googleApiKey: row.google_api_key,
-    aiProvider: (row.ai_provider as IntegrationSettings["aiProvider"]) || "auto",
-    openaiApiKey: row.openai_api_key,
-    anthropicApiKey: row.anthropic_api_key,
-    updatedBy: row.updated_by,
-    updatedAt: row.updated_at,
-  };
-}
-
-/**
- * Self-healing table for third-party credentials (Bitrix/Apollo/Google/AI).
- * Same rationale as `ensureAlertStateTable`: no migration is auto-applied in
- * production, so the table is created here, guarded by `IF NOT EXISTS`.
- * Single row, `id = "default"`. Stored in plain text — see the comment on
- * `integrationSettings` in db/schema.ts for why, and never expose the raw
- * values outside of a `requireUser()`-gated route.
- */
 async function ensureIntegrationSettingsTable(database: D1Database) {
-  await database.prepare(
-    `CREATE TABLE IF NOT EXISTS integration_settings (
+  const db = getDb();
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS integration_settings (
       id text PRIMARY KEY NOT NULL DEFAULT 'default',
       bitrix_webhook_url text,
       apollo_api_key text,
@@ -901,23 +804,31 @@ async function ensureIntegrationSettingsTable(database: D1Database) {
       anthropic_api_key text,
       updated_by text,
       updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
-    )`,
-  ).run();
-}
-
-export async function readIntegrationSettings(
-  database: D1Database,
-): Promise<IntegrationSettings> {
-  await ensureIntegrationSettingsTable(database);
-  const row = await database
-    .prepare(
-      `SELECT ${INTEGRATION_SETTINGS_COLUMNS} FROM integration_settings WHERE id = 'default'`,
     )
-    .first<IntegrationSettingsRow>();
-  return row ? rowToIntegrationSettings(row) : EMPTY_INTEGRATION_SETTINGS;
+  `);
 }
 
-/** Fields left `undefined` keep their current stored value (used so a blank form field never clears an existing key). */
+export async function readIntegrationSettings(database: D1Database): Promise<IntegrationSettings> {
+  await ensureIntegrationSettingsTable(database);
+  const db = getDb();
+  const row = await db
+    .select()
+    .from(isettingsTable)
+    .where(eq(isettingsTable.id, "default"))
+    .get();
+  if (!row) return EMPTY_INTEGRATION_SETTINGS;
+  return {
+    bitrixWebhookUrl: row.bitrixWebhookUrl,
+    apolloApiKey: row.apolloApiKey,
+    googleApiKey: row.googleApiKey,
+    aiProvider: (row.aiProvider as IntegrationSettings["aiProvider"]) || "auto",
+    openaiApiKey: row.openaiApiKey,
+    anthropicApiKey: row.anthropicApiKey,
+    updatedBy: row.updatedBy,
+    updatedAt: row.updatedAt,
+  };
+}
+
 export async function upsertIntegrationSettings(
   database: D1Database,
   input: {
@@ -931,65 +842,59 @@ export async function upsertIntegrationSettings(
   },
 ): Promise<IntegrationSettings> {
   await ensureIntegrationSettingsTable(database);
+  const db = getDb();
   const current = await readIntegrationSettings(database);
   const next: IntegrationSettings = {
-    bitrixWebhookUrl:
-      input.bitrixWebhookUrl !== undefined ? input.bitrixWebhookUrl : current.bitrixWebhookUrl,
+    bitrixWebhookUrl: input.bitrixWebhookUrl !== undefined ? input.bitrixWebhookUrl : current.bitrixWebhookUrl,
     apolloApiKey: input.apolloApiKey !== undefined ? input.apolloApiKey : current.apolloApiKey,
     googleApiKey: input.googleApiKey !== undefined ? input.googleApiKey : current.googleApiKey,
     aiProvider: input.aiProvider ?? current.aiProvider,
     openaiApiKey: input.openaiApiKey !== undefined ? input.openaiApiKey : current.openaiApiKey,
-    anthropicApiKey:
-      input.anthropicApiKey !== undefined ? input.anthropicApiKey : current.anthropicApiKey,
+    anthropicApiKey: input.anthropicApiKey !== undefined ? input.anthropicApiKey : current.anthropicApiKey,
     updatedBy: input.updatedBy,
     updatedAt: new Date().toISOString(),
   };
 
-  await database
-    .prepare(
-      `INSERT INTO integration_settings (id, bitrix_webhook_url, apollo_api_key, google_api_key, ai_provider, openai_api_key, anthropic_api_key, updated_by, updated_at)
-       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         bitrix_webhook_url = excluded.bitrix_webhook_url,
-         apollo_api_key = excluded.apollo_api_key,
-         google_api_key = excluded.google_api_key,
-         ai_provider = excluded.ai_provider,
-         openai_api_key = excluded.openai_api_key,
-         anthropic_api_key = excluded.anthropic_api_key,
-         updated_by = excluded.updated_by,
-         updated_at = excluded.updated_at`,
-    )
-    .bind(
-      next.bitrixWebhookUrl,
-      next.apolloApiKey,
-      next.googleApiKey,
-      next.aiProvider,
-      next.openaiApiKey,
-      next.anthropicApiKey,
-      next.updatedBy,
-      next.updatedAt,
-    )
-    .run();
+  await db
+    .insert(isettingsTable)
+    .values({
+      id: "default",
+      bitrixWebhookUrl: next.bitrixWebhookUrl,
+      apolloApiKey: next.apolloApiKey,
+      googleApiKey: next.googleApiKey,
+      aiProvider: next.aiProvider,
+      openaiApiKey: next.openaiApiKey,
+      anthropicApiKey: next.anthropicApiKey,
+      updatedBy: next.updatedBy,
+      updatedAt: next.updatedAt,
+    })
+    .onConflictDoUpdate({
+      target: isettingsTable.id,
+      set: {
+        bitrixWebhookUrl: sql`excluded.bitrix_webhook_url`,
+        apolloApiKey: sql`excluded.apollo_api_key`,
+        googleApiKey: sql`excluded.google_api_key`,
+        aiProvider: sql`excluded.ai_provider`,
+        openaiApiKey: sql`excluded.openai_api_key`,
+        anthropicApiKey: sql`excluded.anthropic_api_key`,
+        updatedBy: sql`excluded.updated_by`,
+        updatedAt: sql`excluded.updated_at`,
+      },
+    });
 
   return next;
 }
 
-function parsePayloads<T>(rows: D1Row[]): T[] {
-  return rows.map((row) => JSON.parse(row.payload_json) as T);
-}
-
 export async function readObjectives(database: D1Database): Promise<Objective[]> {
-  const rows = await database.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>();
-  return parsePayloads<Objective>(rows.results);
+  const db = getDb();
+  const rows = await db.select({ payloadJson: objectives.payloadJson }).from(objectives).orderBy(asc(objectives.id)).all();
+  return rows.map((row) => JSON.parse(row.payloadJson) as Objective);
 }
 
-/** Mirrors the read-only ratio calc in CommercialControl.tsx's OKR card so progress stays consistent. */
 function computeObjectiveProgress(keyResults: ObjectiveKeyResult[]): number {
   if (keyResults.length === 0) return 0;
   const ratios = keyResults.map((kr) =>
-    kr.inverse
-      ? kr.target / Math.max(kr.actual, 0.0001)
-      : kr.actual / Math.max(kr.target, 0.0001),
+    kr.inverse ? kr.target / Math.max(kr.actual, 0.0001) : kr.actual / Math.max(kr.target, 0.0001),
   );
   return ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length;
 }
@@ -999,13 +904,11 @@ export async function updateObjective(
   id: string,
   patch: { title: string; owner: string; cadence: string; keyResults: ObjectiveKeyResult[] },
 ): Promise<Objective> {
-  const row = await database
-    .prepare("SELECT payload_json FROM objectives WHERE id = ?")
-    .bind(id)
-    .first<D1Row>();
+  const db = getDb();
+  const row = await db.select({ payloadJson: objectives.payloadJson }).from(objectives).where(eq(objectives.id, id)).get();
   if (!row) throw new Error("Objetivo não encontrado.");
 
-  const existing = JSON.parse(row.payload_json) as Objective;
+  const existing = JSON.parse(row.payloadJson) as Objective;
   const progress = computeObjectiveProgress(patch.keyResults);
   const next: Objective = {
     ...existing,
@@ -1016,24 +919,27 @@ export async function updateObjective(
     progress,
   };
 
-  await database
-    .prepare(
-      "UPDATE objectives SET title = ?, owner = ?, progress = ?, payload_json = ? WHERE id = ?",
-    )
-    .bind(next.title, next.owner, next.progress, JSON.stringify(next), id)
-    .run();
+  await db
+    .update(objectives)
+    .set({
+      title: next.title,
+      owner: next.owner,
+      progress: next.progress,
+      payloadJson: JSON.stringify(next),
+    })
+    .where(eq(objectives.id, id));
 
   return next;
 }
 
-export function rowToDeal(row: CommercialDealRow): Deal {
-  const extra = JSON.parse(row.payload_json) as Record<string, unknown>;
+export function rowToDeal(row: any): Deal {
+  const extra = JSON.parse(row.payloadJson) as Record<string, unknown>;
   return {
     ...extra,
     id: row.id,
     year: row.year,
     month: row.month,
-    monthNumber: row.month_number,
+    monthNumber: row.monthNumber,
     owner: row.owner,
     company: row.company,
     origin: row.origin,
@@ -1042,38 +948,30 @@ export function rowToDeal(row: CommercialDealRow): Deal {
     billed: row.billed,
     stage: row.stage,
     notes: row.notes,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    createdBy: row.created_by,
-    updatedBy: row.updated_by,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    createdBy: row.createdBy,
+    updatedBy: row.updatedBy,
   } as Deal;
 }
 
-/** Shared by `loadCommercialData()` and the polling `GET /api/deals` route. */
 export async function readDealsAndTargets(
   database: D1Database,
 ): Promise<{ deals: Deal[]; targets: Target[] }> {
   await ensureSeeded(database);
   await ensureStageBackfill(database);
   await ensureExtraMonthTargets(database);
+  const db = getDb();
 
   const [dealResult, targetResult] = await Promise.all([
-    database
-      .prepare(
-        "SELECT id, year, month_number, month, owner, company, origin, sold, adjusted, billed, stage, notes, created_by, updated_by, created_at, updated_at, payload_json FROM commercial_deals ORDER BY month_number, id",
-      )
-      .all<CommercialDealRow>(),
-    database
-      .prepare(
-        "SELECT year, month_number, month, target, sold, adjusted FROM monthly_metrics ORDER BY month_number",
-      )
-      .all<TargetRow>(),
+    db.select().from(commercialDeals).orderBy(asc(commercialDeals.monthNumber), asc(commercialDeals.id)).all(),
+    db.select().from(monthlyMetrics).orderBy(asc(monthlyMetrics.monthNumber)).all(),
   ]);
 
-  const deals = dealResult.results.map(rowToDeal);
-  const targets: Target[] = targetResult.results.map((row) => ({
+  const deals = dealResult.map(rowToDeal);
+  const targets: Target[] = targetResult.map((row) => ({
     year: row.year,
-    monthNumber: row.month_number,
+    monthNumber: row.monthNumber,
     month: row.month,
     target: row.target,
     sold: row.sold,
@@ -1141,19 +1039,16 @@ export async function loadCommercialData(): Promise<CommercialData> {
   if (!env.DB) return buildFromStaticJson(asOf);
 
   try {
-    // Sequenced: readDealsAndTargets() runs ensureSeeded()/ensureStageBackfill()
-    // first, which the objectives/workbook queries below depend on existing.
     const { deals, targets } = await readDealsAndTargets(env.DB);
+    const db = getDb();
     const [sellers, actionItems, growthTargets, alertStates, objectiveResult, workbookResult] =
       await Promise.all([
         readSellerRoster(env.DB),
         readActionItems(env.DB),
         readSellerGrowthTargets(env.DB),
         readAlertStates(env.DB),
-        env.DB.prepare("SELECT payload_json FROM objectives ORDER BY id").all<D1Row>(),
-        env.DB.prepare(
-          "SELECT sheet_name, row_number, data_json, formula_json FROM workbook_rows ORDER BY id",
-        ).all<WorkbookRow>(),
+        db.select({ payloadJson: objectives.payloadJson }).from(objectives).orderBy(asc(objectives.id)).all(),
+        db.select().from(workbookRows).orderBy(asc(workbookRows.id)).all(),
       ]);
 
     const derived = deriveMetrics({
@@ -1167,14 +1062,14 @@ export async function loadCommercialData(): Promise<CommercialData> {
       string,
       Array<{ rowNumber: number; row: unknown[]; formula: unknown[] }>
     >();
-    for (const row of workbookResult.results) {
-      const rows = rawRows.get(row.sheet_name) ?? [];
+    for (const row of workbookResult) {
+      const rows = rawRows.get(row.sheetName) ?? [];
       rows.push({
-        rowNumber: row.row_number,
-        row: JSON.parse(row.data_json) as unknown[],
-        formula: JSON.parse(row.formula_json) as unknown[],
+        rowNumber: row.rowNumber,
+        row: JSON.parse(row.dataJson) as unknown[],
+        formula: JSON.parse(row.formulaJson) as unknown[],
       });
-      rawRows.set(row.sheet_name, rows);
+      rawRows.set(row.sheetName, rows);
     }
 
     const rawSheets = commercialDataJson.rawSheets.map((sheet) => {
@@ -1199,12 +1094,12 @@ export async function loadCommercialData(): Promise<CommercialData> {
       actionItems,
       growthTargets,
       alertStates,
-      objectives: parsePayloads<StaticData["objectives"][number]>(objectiveResult.results),
+      objectives: objectiveResult.map((r) => JSON.parse(r.payloadJson) as StaticData["objectives"][number]),
       governance: commercialDataJson.governance,
       dataQualityIssues: commercialDataJson.dataQualityIssues,
       rawSheets,
     };
-  } catch {
+  } catch (err) {
     return buildFromStaticJson(asOf);
   }
 }

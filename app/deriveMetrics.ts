@@ -1,3 +1,4 @@
+import { GROWTH_PLAN_HORIZON_MONTHS, GROWTH_PLAN_MONTHLY_INCREASE } from "./utils/constants";
 export type Stage = "aberto" | "ganho" | "faturado" | "pago";
 
 export const STAGES: Stage[] = ["aberto", "ganho", "faturado", "pago"];
@@ -112,6 +113,34 @@ export type SellerGrowthTarget = {
   realizedTarget: number;
 };
 
+export type SellerSummary = {
+  sold: number;
+  adjusted: number;
+  billed: number;
+  dealsCount: number;
+  ticket: number;
+  realization: number;
+  averageCycle: number;
+  waiting: number;
+  topOrigin: string;
+  months: Array<{
+    month: string;
+    shortMonth: string;
+    deals: number;
+    adjusted: number;
+  }>;
+};
+
+export type GrowthPlanRow = {
+  year: number;
+  monthNumber: number;
+  month: string;
+  label: string;
+  entryTarget: number;
+  realizedTarget: number;
+  isSuggested: boolean;
+};
+
 export type OwnerPerformance = {
   owner: string;
   deals: number;
@@ -143,6 +172,113 @@ function health(attainment: number): MonthlyMetric["health"] {
 function round(value: number, decimals = 2) {
   const factor = 10 ** decimals;
   return Math.round((value + Number.EPSILON) * factor) / factor;
+}
+
+export function buildSellerSummary(
+  sellerDeals: Deal[],
+  monthlyMetricsList: MonthlyMetric[],
+): SellerSummary {
+  const sold = sellerDeals.reduce((sum, deal) => sum + deal.sold, 0);
+  const adjusted = sellerDeals.reduce((sum, deal) => sum + deal.adjusted, 0);
+  const billed = sellerDeals.reduce((sum, deal) => sum + deal.billed, 0);
+  const cycles = sellerDeals
+    .map((deal) => {
+      if (!deal.proposalAcceptedAt || !deal.contractSignedAt) return null;
+      const start = new Date(`${deal.proposalAcceptedAt}T00:00:00`);
+      const end = new Date(`${deal.contractSignedAt}T00:00:00`);
+      return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86_400_000));
+    })
+    .filter((days): days is number => days !== null);
+  const origins = sellerDeals.reduce<Record<string, number>>((accumulator, deal) => {
+    const origin = deal.origin || "Não informado";
+    accumulator[origin] = (accumulator[origin] ?? 0) + 1;
+    return accumulator;
+  }, {});
+  const topOrigin =
+    Object.entries(origins).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Sem dados";
+  const months = monthlyMetricsList.map((metric) => {
+    const monthDeals = sellerDeals.filter((deal) => deal.monthNumber === metric.monthNumber);
+    return {
+      month: metric.month,
+      shortMonth: metric.month.slice(0, 3),
+      deals: monthDeals.length,
+      adjusted: monthDeals.reduce((sum, deal) => sum + deal.adjusted, 0),
+    };
+  });
+
+  return {
+    sold,
+    adjusted,
+    billed,
+    dealsCount: sellerDeals.length,
+    ticket: sellerDeals.length ? adjusted / sellerDeals.length : 0,
+    realization: sold ? adjusted / sold : 0,
+    averageCycle: cycles.length
+      ? cycles.reduce((sum, days) => sum + days, 0) / cycles.length
+      : 0,
+    waiting: sellerDeals.filter((deal) => deal.stage === "faturado").length,
+    topOrigin,
+    months,
+  };
+}
+
+export function buildGrowthPlan(
+  ownerDeals: Deal[],
+  savedTargets: SellerGrowthTarget[],
+  asOf: string,
+): GrowthPlanRow[] {
+  const now = new Date(asOf);
+  const startYear = now.getFullYear();
+  const startMonth = now.getMonth() + 1;
+
+  const entryByMonth = new Map<number, number>();
+  const realizedByMonth = new Map<number, number>();
+  for (const deal of ownerDeals) {
+    entryByMonth.set(
+      deal.monthNumber,
+      (entryByMonth.get(deal.monthNumber) ?? 0) + deal.adjusted,
+    );
+    if (deal.stage === "ganho" || deal.stage === "faturado" || deal.stage === "pago") {
+      realizedByMonth.set(
+        deal.monthNumber,
+        (realizedByMonth.get(deal.monthNumber) ?? 0) + deal.adjusted,
+      );
+    }
+  }
+
+  const monthsWithHistory = [...entryByMonth.keys()].filter((month) => month <= startMonth);
+  const averageEntry = monthsWithHistory.length
+    ? monthsWithHistory.reduce((sum, month) => sum + (entryByMonth.get(month) ?? 0), 0) /
+      monthsWithHistory.length
+    : 0;
+  const averageRealized = monthsWithHistory.length
+    ? monthsWithHistory.reduce((sum, month) => sum + (realizedByMonth.get(month) ?? 0), 0) /
+      monthsWithHistory.length
+    : 0;
+  const savedByKey = new Map(
+    savedTargets.map((row) => [`${row.year}-${row.monthNumber}`, row]),
+  );
+
+  const rows: GrowthPlanRow[] = [];
+  for (let step = 0; step < GROWTH_PLAN_HORIZON_MONTHS; step++) {
+    const absoluteMonth = startMonth - 1 + step;
+    const year = startYear + Math.floor(absoluteMonth / 12);
+    const monthNumber = (absoluteMonth % 12) + 1;
+    const month = MONTH_NAMES[monthNumber - 1];
+    const saved = savedByKey.get(`${year}-${monthNumber}`);
+    const growthFactor = (1 + GROWTH_PLAN_MONTHLY_INCREASE) ** (step + 1);
+    rows.push({
+      year,
+      monthNumber,
+      month,
+      label: `${month.slice(0, 3)}/${String(year).slice(2)}`,
+      entryTarget: saved?.entryTarget ?? Math.round(averageEntry * growthFactor),
+      realizedTarget: saved?.realizedTarget ?? Math.round(averageRealized * growthFactor),
+      isSuggested: !saved,
+    });
+  }
+
+  return rows;
 }
 
 /**

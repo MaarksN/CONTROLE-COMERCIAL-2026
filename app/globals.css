@@ -1,12 +1,14 @@
 
 .dark {
-  --atlas-graphite: #f0f0f0;
+  --atlas-graphite: #f8fafc;
   --atlas-ink: #ffffff;
-  --atlas-white: #1a1a1a;
-  --atlas-canvas: #0a0a0a;
-  --atlas-line: #2a2a2a;
-  --atlas-muted: #888888;
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  --atlas-white: #0f172a;
+  --atlas-canvas: #020617;
+  --atlas-line: #1e293b;
+  --atlas-muted: #94a3b8;
+  --shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
+  --glass-bg: rgba(15, 23, 42, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
 }
 
 body {
@@ -14,25 +16,36 @@ body {
 }
 
 .panel, .kpi-card, .floating-widget, .glassmorphism, input, select, button {
-  transition: all 0.3s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glassmorphism {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow);
 }
 
 
 :root {
-  --atlas-orange: #ff5618;
-  --atlas-orange-2: #ff6b10;
-  --atlas-amber: #ffc500;
-  --atlas-amber-2: #ff8008;
-  --atlas-graphite: #333333;
-  --atlas-ink: #171717;
+  --atlas-orange: #f97316;
+  --atlas-orange-2: #ea580c;
+  --atlas-amber: #f59e0b;
+  --atlas-amber-2: #d97706;
+  --atlas-graphite: #0f172a;
+  --atlas-ink: #020617;
   --atlas-white: #ffffff;
-  --atlas-canvas: #f4f3ef;
-  --atlas-line: #dedbd4;
-  --atlas-muted: #77746e;
-  --atlas-success: #087a55;
-  --atlas-danger: #c93f2d;
-  --atlas-blue: #2f6edb;
-  --shadow: 0 18px 50px rgba(38, 35, 31, 0.08);
+  --atlas-canvas: #f8fafc;
+  --atlas-line: #e2e8f0;
+  --atlas-muted: #64748b;
+  --atlas-success: #10b981;
+  --atlas-danger: #ef4444;
+  --atlas-blue: #3b82f6;
+  --shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(15, 23, 42, 0.05);
+  --font-atlas: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 * {

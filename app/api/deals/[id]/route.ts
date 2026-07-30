@@ -1,5 +1,8 @@
 import { isValidDateInput, isValidStage, requireUser, toFiniteNonNegative, toRouteErrorMessage, writeAudit } from "@/app/api/_lib";
 import { MONTH_NAMES } from "@/app/deriveMetrics";
+import { getDb } from "@/db";
+import { commercialDeals } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { rowToDeal } from "@/db/commercial-data";
 
@@ -26,12 +29,28 @@ type ExistingRow = {
 };
 
 async function fetchRow(id: string): Promise<ExistingRow | null> {
-  const row = await env.DB.prepare(
-    "SELECT id, year, month_number, month, owner, company, origin, sold, adjusted, billed, stage, notes, created_by, updated_by, created_at, updated_at, payload_json FROM commercial_deals WHERE id = ?",
-  )
-    .bind(id)
-    .first<ExistingRow>();
-  return row ?? null;
+  const db = getDb();
+  const row = await db.select().from(commercialDeals).where(eq(commercialDeals.id, id)).get();
+  if (!row) return null;
+  return {
+    id: row.id,
+    year: row.year,
+    month_number: row.monthNumber,
+    month: row.month,
+    owner: row.owner,
+    company: row.company,
+    origin: row.origin,
+    sold: row.sold,
+    adjusted: row.adjusted,
+    billed: row.billed,
+    stage: row.stage,
+    notes: row.notes,
+    created_by: row.createdBy,
+    updated_by: row.updatedBy,
+    created_at: row.createdAt,
+    updated_at: row.updatedAt,
+    payload_json: row.payloadJson,
+  };
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
@@ -120,27 +139,23 @@ export async function PATCH(request: Request, context: RouteContext) {
     next.updatedAt = new Date().toISOString();
     next.updatedBy = user.email;
 
-    await env.DB.prepare(
-      "UPDATE commercial_deals SET year = ?, month_number = ?, month = ?, owner = ?, company = ?, origin = ?, sold = ?, adjusted = ?, billed = ?, stage = ?, notes = ?, updated_by = ?, updated_at = ?, payload_json = ? WHERE id = ?",
-    )
-      .bind(
-        next.year,
-        next.monthNumber,
-        next.month,
-        next.owner,
-        next.company,
-        next.origin,
-        next.sold,
-        next.adjusted,
-        next.billed,
-        next.stage,
-        next.notes,
-        user.email,
-        next.updatedAt,
-        JSON.stringify(next),
-        id,
-      )
-      .run();
+    const db = getDb();
+    await db.update(commercialDeals).set({
+      year: next.year,
+      monthNumber: next.monthNumber,
+      month: next.month,
+      owner: next.owner,
+      company: next.company,
+      origin: next.origin,
+      sold: next.sold,
+      adjusted: next.adjusted,
+      billed: next.billed,
+      stage: next.stage,
+      notes: next.notes,
+      updatedBy: user.email,
+      updatedAt: next.updatedAt,
+      payloadJson: JSON.stringify(next),
+    }).where(eq(commercialDeals.id, id)).run();
 
     await writeAudit({
       actorEmail: user.email,
@@ -182,7 +197,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
       detail: { company: existing.company, owner: existing.owner, adjusted: existing.adjusted },
     });
 
-    await env.DB.prepare("DELETE FROM commercial_deals WHERE id = ?").bind(id).run();
+    const db = getDb();
+    await db.delete(commercialDeals).where(eq(commercialDeals.id, id)).run();
 
     return Response.json({ ok: true });
   } catch (error) {

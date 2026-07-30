@@ -1,5 +1,8 @@
 import { requireUser, toFiniteNonNegative, toRouteErrorMessage, writeAudit } from "@/app/api/_lib";
 import { MONTH_NAMES } from "@/app/deriveMetrics";
+import { getDb } from "@/db";
+import { monthlyMetrics } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 
 type RouteContext = { params: Promise<{ year: string; monthNumber: string }> };
@@ -39,21 +42,26 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
 
     const month = MONTH_NAMES[monthNumber - 1];
-    const existing = await env.DB.prepare(
-      "SELECT sold, adjusted FROM monthly_metrics WHERE year = ? AND month_number = ?",
-    )
-      .bind(year, monthNumber)
-      .first<{ sold: number; adjusted: number }>();
+    const db = getDb();
+    const existing = await db.select({ sold: monthlyMetrics.sold, adjusted: monthlyMetrics.adjusted })
+      .from(monthlyMetrics)
+      .where(and(eq(monthlyMetrics.year, year), eq(monthlyMetrics.monthNumber, monthNumber)))
+      .get();
     const nextSold = sold ?? existing?.sold ?? 0;
     const nextAdjusted = adjusted ?? existing?.adjusted ?? 0;
 
-    await env.DB.prepare(
-      `INSERT INTO monthly_metrics (year, month_number, month, target, sold, adjusted, payload_json)
-       VALUES (?, ?, ?, ?, ?, ?, '{}')
-       ON CONFLICT(year, month_number) DO UPDATE SET target = excluded.target, sold = excluded.sold, adjusted = excluded.adjusted`,
-    )
-      .bind(year, monthNumber, month, target, nextSold, nextAdjusted)
-      .run();
+    await db.insert(monthlyMetrics).values({
+      year,
+      monthNumber,
+      month,
+      target,
+      sold: nextSold,
+      adjusted: nextAdjusted,
+      payloadJson: '{}',
+    }).onConflictDoUpdate({
+      targetWhere: and(eq(monthlyMetrics.year, year), eq(monthlyMetrics.monthNumber, monthNumber)),
+      set: { target, sold: nextSold, adjusted: nextAdjusted }
+    }).run();
 
     await writeAudit({
       actorEmail: user.email,
