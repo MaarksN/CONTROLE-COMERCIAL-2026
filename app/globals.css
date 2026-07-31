@@ -164,7 +164,7 @@ button {
 
 .nav-item {
   display: grid;
-  grid-template-columns: 27px 1fr;
+  grid-template-columns: 27px 1fr auto;
   align-items: center;
   gap: 11px;
   width: 100%;
@@ -202,6 +202,20 @@ button {
 
 .nav-item.active .nav-index {
   color: var(--atlas-orange);
+}
+
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--atlas-orange);
+  color: var(--atlas-white);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .sidebar-proof {
@@ -2771,6 +2785,15 @@ button {
     color: var(--atlas-white);
   }
 
+  .mobile-nav .nav-badge {
+    margin-left: 6px;
+  }
+
+  .mobile-nav button.active .nav-badge {
+    background: var(--atlas-white);
+    color: var(--atlas-orange);
+  }
+
   .executive-hero {
     grid-template-columns: 1fr;
     gap: 18px;
@@ -3498,6 +3521,11 @@ button {
 
 .action-item-row:first-of-type {
   border-top: 0;
+}
+
+.action-item-due.overdue {
+  color: var(--atlas-danger);
+  font-weight: 700;
 }
 
 .status-chip {

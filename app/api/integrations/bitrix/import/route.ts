@@ -1,6 +1,6 @@
 import { requireUser, toRouteErrorMessage } from "@/app/api/_lib";
 import { env } from "cloudflare:workers";
-import { readIntegrationSettings } from "@/db/commercial-data";
+import { readIntegrationSettings, recordIntegrationSyncResult } from "@/db/commercial-data";
 import { callBitrix, type BitrixDealListItem } from "../_client";
 
 const MAX_IMPORT_PREVIEW = 200;
@@ -34,6 +34,8 @@ export async function POST() {
       start += 50;
     }
 
+    await recordIntegrationSyncResult(env.DB, { id: "bitrix", ok: true });
+
     return Response.json({
       items: items.slice(0, MAX_IMPORT_PREVIEW).map((item) => ({
         bitrixId: item.ID,
@@ -45,6 +47,13 @@ export async function POST() {
     });
   } catch (error) {
     console.error("POST /api/integrations/bitrix/import failed:", error);
+    if (env.DB) {
+      await recordIntegrationSyncResult(env.DB, {
+        id: "bitrix",
+        ok: false,
+        error: toRouteErrorMessage(error),
+      });
+    }
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
 }

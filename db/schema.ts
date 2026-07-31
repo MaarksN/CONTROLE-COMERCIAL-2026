@@ -77,6 +77,7 @@ export const actionItems = sqliteTable(
     horizon: text("horizon").notNull().default("h1"),
     status: text("status").notNull().default("pendente"),
     source: text("source"),
+    dueDate: text("due_date"),
     createdBy: text("created_by"),
     updatedBy: text("updated_by"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -152,6 +153,17 @@ export const alertState = sqliteTable("alert_state", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+// Tracks the outcome of each integration's most recent sync attempt (id is
+// the integration name, e.g. "bitrix") so failures can surface as alerts
+// (see app/deriveAlerts.ts) instead of only a one-off UI toast.
+export const integrationSyncState = sqliteTable("integration_sync_state", {
+  id: text("id").primaryKey(),
+  lastStatus: text("last_status").notNull().default("ok"),
+  lastError: text("last_error"),
+  lastAttemptAt: text("last_attempt_at"),
+  lastSuccessAt: text("last_success_at"),
+});
+
 export const auditLog = sqliteTable("audit_log", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   actorEmail: text("actor_email").notNull(),
@@ -172,9 +184,24 @@ export const integrationSettings = sqliteTable("integration_settings", {
   bitrixWebhookUrl: text("bitrix_webhook_url"),
   apolloApiKey: text("apollo_api_key"),
   googleApiKey: text("google_api_key"),
+  googleClientId: text("google_client_id"),
+  googleClientSecret: text("google_client_secret"),
   aiProvider: text("ai_provider").notNull().default("auto"),
   openaiApiKey: text("openai_api_key"),
   anthropicApiKey: text("anthropic_api_key"),
   updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// One row per user who has connected a Google account (see
+// app/api/integrations/google/auth and /callback). Tokens are opaque to the
+// rest of the app; only the google.ts REST helpers read them.
+export const googleOauthTokens = sqliteTable("google_oauth_tokens", {
+  userEmail: text("user_email").primaryKey(),
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token"),
+  expiresAt: text("expires_at").notNull(),
+  scopes: text("scopes").notNull().default(""),
+  googleAccountEmail: text("google_account_email"),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

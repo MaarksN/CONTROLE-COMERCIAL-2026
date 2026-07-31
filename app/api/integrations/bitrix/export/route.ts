@@ -3,7 +3,7 @@ import { getDb } from "@/db";
 import { commercialDeals } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { env } from "cloudflare:workers";
-import { readIntegrationSettings } from "@/db/commercial-data";
+import { readIntegrationSettings, recordIntegrationSyncResult } from "@/db/commercial-data";
 import { callBitrix } from "../_client";
 
 type DealRow = { id: string; payload_json: string };
@@ -81,9 +81,22 @@ export async function POST(request: Request) {
       detail: { created, updated, failed },
     });
 
+    await recordIntegrationSyncResult(env.DB, {
+      id: "bitrix",
+      ok: failed === 0,
+      error: failed > 0 ? `${failed} de ${dealIds.length} negócio(s) falharam ao exportar.` : null,
+    });
+
     return Response.json({ created, updated, failed });
   } catch (error) {
     console.error("POST /api/integrations/bitrix/export failed:", error);
+    if (env.DB) {
+      await recordIntegrationSyncResult(env.DB, {
+        id: "bitrix",
+        ok: false,
+        error: toRouteErrorMessage(error),
+      });
+    }
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
 }

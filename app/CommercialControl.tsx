@@ -37,7 +37,7 @@ import {
 import { computeSalesHealthScore } from "./deriveHealthScore";
 import { ThemeToggle } from "./ThemeToggle";
 import { AssistantWidget } from "./AssistantWidget";
-import { computeAlerts, type AlertState } from "./deriveAlerts";
+import { computeAlerts, type AlertState, type AlertSeverity } from "./deriveAlerts";
 import { computeSellerPerformanceScore } from "./deriveSellerScore";
 import { ENTERPRISE_ROADMAP } from "./deriveEnterpriseRoadmap";
 import type { CommercialData, Objective, ObjectiveKeyResult } from "@/db/commercial-data";
@@ -69,6 +69,9 @@ export type IntegrationSettingsView = {
   apolloKeyMasked: string | null;
   googleConfigured: boolean;
   googleKeyMasked: string | null;
+  googleOAuthConfigured: boolean;
+  googleClientIdMasked: string | null;
+  googleClientSecretMasked: string | null;
   aiProvider: "auto" | "openai" | "anthropic";
   openaiConfigured: boolean;
   openaiKeyMasked: string | null;
@@ -201,6 +204,15 @@ const ACTION_STATUS_LABELS: Record<ActionStatus, string> = {
 };
 
 const ACTION_STATUS_ORDER: ActionStatus[] = ["pendente", "andamento", "concluido"];
+
+// Maps the alerts engine's 4-tier severity (app/deriveAlerts.ts) onto the
+// 3-tier "alta/média/baixa" scale the bottleneck-card styling already uses.
+const BOTTLENECK_SEVERITY: Record<AlertSeverity, "alta" | "média" | "baixa"> = {
+  critico: "alta",
+  alto_risco: "alta",
+  atencao: "média",
+  informativo: "baixa",
+};
 
 function nextActionStatus(status: ActionStatus): ActionStatus {
   const index = ACTION_STATUS_ORDER.indexOf(status);
@@ -776,10 +788,11 @@ export type ActionItemFormValues = {
   description: string;
   owner: string;
   horizon: ActionHorizon;
+  dueDate: string;
 };
 
 function emptyActionItemForm(defaultHorizon: ActionHorizon): ActionItemFormValues {
-  return { title: "", description: "", owner: "", horizon: defaultHorizon };
+  return { title: "", description: "", owner: "", horizon: defaultHorizon, dueDate: "" };
 }
 
 function formFromActionItem(item: ActionItem): ActionItemFormValues {
@@ -788,6 +801,7 @@ function formFromActionItem(item: ActionItem): ActionItemFormValues {
     description: item.description,
     owner: item.owner ?? "",
     horizon: item.horizon,
+    dueDate: item.dueDate ?? "",
   };
 }
 
@@ -866,6 +880,14 @@ function ActionItemModal({
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            <span>Prazo (data limite)</span>
+            <input
+              type="date"
+              value={values.dueDate}
+              onChange={(event) => setValues({ ...values, dueDate: event.target.value })}
+            />
           </label>
 
           {errorMessage && <p className="modal-error">{errorMessage}</p>}
@@ -1332,11 +1354,14 @@ export function CommercialControl({
     showAllActivity, setShowAllActivity, showAllQualityIssues, setShowAllQualityIssues, showAllBottlenecks, setShowAllBottlenecks,
     integrationSettings, setIntegrationSettings, integrationForm, setIntegrationForm, integrationSaving, setIntegrationSaving, integrationError, setIntegrationError,
     bitrixImportItems, setBitrixImportItems, bitrixImportSelected, setBitrixImportSelected, bitrixImportLoading, setBitrixImportLoading, bitrixImportError, setBitrixImportError, bitrixImportConfirming, setBitrixImportConfirming, bitrixExporting, setBitrixExporting, bitrixExportError, setBitrixExportError, csvImporting, setCsvImporting, csvImportError, setCsvImportError,
+    bitrixAutoSyncing, bitrixAutoSyncedAt, bitrixAutoSyncError, runBitrixAutoSync,
+    googleConnection, googleDisconnecting, disconnectGoogle, calendarReminderKey, createCalendarReminder,
+    alertsDigestSending, sendAlertsDigest, sheetsExporting, exportDealsToSheets,
     leadQuery, setLeadQuery, leadResult, setLeadResult, leadLoading, setLeadLoading, leadError, setLeadError, leadPrefill, setLeadPrefill,
     aiReportOpen, setAiReportOpen, aiReportLoading, setAiReportLoading, aiReportError, setAiReportError, aiReportText, setAiReportText,
     objectives, setObjectives, objectiveModal, setObjectiveModal, objectiveModalSaving, setObjectiveModalSaving, objectiveModalError, setObjectiveModalError,
     owners, sellerRoleByName, derived, monthlyMetrics, executiveSummary, ownerPerformance, originPerformance, currentMonthNumber, currentMonthMetric,
-    dashboardInsights, revenueClassification, forecastScenarios, healthScore, alerts, alertStateByKey, dealsById, sellerScores, dataQualityMetrics, actionItemsByHorizon, origins,
+    dashboardInsights, revenueClassification, forecastScenarios, healthScore, alerts, alertStateByKey, openAlerts, dealsById, sellerScores, dataQualityMetrics, actionItemsByHorizon, origins,
     filteredDeals, dealsByStage, selectedOwnerDeals, selectedOwnerDashboard, selectedOwnerMaxMonth,
     visaoMonthLabel, visaoCompanyDeals, visaoCompanySummary, visaoSellerDeals, visaoSellerSummary,
     selectedOwnerAllDeals, selectedOwnerGrowthTargets, selectedOwnerGrowthPlan, selectedOwnerWon, selectedOwnerOpen,
@@ -1375,6 +1400,9 @@ export function CommercialControl({
             >
               <span className="nav-index">{item.index}</span>
               <span>{item.label}</span>
+              {item.id === "governanca" && openAlerts.length > 0 && (
+                <span className="nav-badge">{openAlerts.length}</span>
+              )}
             </button>
           ))}
         </nav>
@@ -1436,6 +1464,9 @@ export function CommercialControl({
               onClick={() => setSection(item.id)}
             >
               {item.label}
+              {item.id === "governanca" && openAlerts.length > 0 && (
+                <span className="nav-badge">{openAlerts.length}</span>
+              )}
             </button>
           ))}
         </div>
@@ -1595,31 +1626,26 @@ export function CommercialControl({
                     <span className="section-kicker">Gargalos ao vivo</span>
                     <h3>Controle Comercial 2026</h3>
                   </div>
-                  <span className="issue-count">{dashboardInsights.internalBottlenecks.length} alertas</span>
+                  <span className="issue-count">{openAlerts.length} alertas</span>
                 </div>
                 <div className="bottleneck-list">
-                  {dashboardInsights.internalBottlenecks.length === 0 && (
+                  {openAlerts.length === 0 && (
                     <p className="activity-empty">Nenhum gargalo identificado no momento.</p>
                   )}
-                  {(showAllBottlenecks
-                    ? dashboardInsights.internalBottlenecks
-                    : dashboardInsights.internalBottlenecks.slice(0, 5)
-                  ).map((item) => (
-                    <div key={item.label} className={`bottleneck-item severity-${item.severity}`}>
-                      <strong>{item.label}</strong>
-                      <p>{item.detail}</p>
+                  {(showAllBottlenecks ? openAlerts : openAlerts.slice(0, 5)).map((alert) => (
+                    <div key={alert.key} className={`bottleneck-item severity-${BOTTLENECK_SEVERITY[alert.severity]}`}>
+                      <strong>{alert.title}</strong>
+                      <p>{alert.description}</p>
                     </div>
                   ))}
                 </div>
-                {dashboardInsights.internalBottlenecks.length > 5 && (
+                {openAlerts.length > 5 && (
                   <button
                     type="button"
                     className="list-toggle"
                     onClick={() => setShowAllBottlenecks((prev) => !prev)}
                   >
-                    {showAllBottlenecks
-                      ? "Ver menos"
-                      : `Ver mais (${dashboardInsights.internalBottlenecks.length - 5})`}
+                    {showAllBottlenecks ? "Ver menos" : `Ver mais (${openAlerts.length - 5})`}
                   </button>
                 )}
               </article>
@@ -1740,6 +1766,18 @@ export function CommercialControl({
                         <small>
                           {item.owner ?? "Sem responsável"}
                           {item.source ? ` · ${item.source}` : ""}
+                          {item.dueDate && (
+                            <span
+                              className={
+                                item.status !== "concluido" && item.dueDate < asOf.slice(0, 10)
+                                  ? "action-item-due overdue"
+                                  : "action-item-due"
+                              }
+                            >
+                              {" · Prazo: "}
+                              {new Date(`${item.dueDate}T00:00:00`).toLocaleDateString("pt-BR")}
+                            </span>
+                          )}
                         </small>
                       </div>
                     </div>
@@ -1902,6 +1940,16 @@ export function CommercialControl({
                   <span className="section-kicker">Alertas inteligentes</span>
                   <h3>{alerts.length} alerta(s) detectado(s) por regra, não decorativos</h3>
                 </div>
+                {googleConnection?.connected && openAlerts.length > 0 && (
+                  <button
+                    type="button"
+                    className="table-edit-button"
+                    disabled={alertsDigestSending}
+                    onClick={() => void sendAlertsDigest()}
+                  >
+                    {alertsDigestSending ? "Enviando..." : "Enviar resumo por e-mail"}
+                  </button>
+                )}
               </div>
               {alerts.length === 0 ? (
                 <p className="empty-state">Nenhum alerta no momento.</p>
@@ -1932,6 +1980,16 @@ export function CommercialControl({
                               onClick={() => setDrilldown({ title: alert.title, dealIds: alert.evidenceDealIds })}
                             >
                               Ver negócios ({alert.evidenceDealIds.length})
+                            </button>
+                          )}
+                          {alert.category === "followup" && googleConnection?.connected && (
+                            <button
+                              type="button"
+                              className="table-edit-button"
+                              disabled={calendarReminderKey === alert.key}
+                              onClick={() => void createCalendarReminder(alert)}
+                            >
+                              {calendarReminderKey === alert.key ? "Criando..." : "Criar lembrete no Calendar"}
                             </button>
                           )}
                           {!isReadOnly && status === "aberto" && (
@@ -3629,6 +3687,28 @@ export function CommercialControl({
                   />
                 </label>
                 <label>
+                  <span>Google Client ID (OAuth)</span>
+                  <input
+                    placeholder={integrationSettings?.googleClientIdMasked ?? "Não configurado"}
+                    value={integrationForm.googleClientId}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({ ...prev, googleClientId: event.target.value }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                </label>
+                <label>
+                  <span>Google Client Secret (OAuth)</span>
+                  <input
+                    placeholder={integrationSettings?.googleClientSecretMasked ?? "Não configurado"}
+                    value={integrationForm.googleClientSecret}
+                    onChange={(event) =>
+                      setIntegrationForm((prev) => ({ ...prev, googleClientSecret: event.target.value }))
+                    }
+                    disabled={isReadOnly}
+                  />
+                </label>
+                <label>
                   <span>Provedor de IA</span>
                   <select
                     value={integrationForm.aiProvider}
@@ -3689,6 +3769,18 @@ export function CommercialControl({
                   <span className="section-kicker">Bitrix24</span>
                   <h3>Importar e exportar negócios</h3>
                 </div>
+                {integrationSettings?.bitrixConfigured && (
+                  <div className={bitrixAutoSyncError ? "proof-line proof-line-error" : "proof-line"}>
+                    <i />
+                    {bitrixAutoSyncing
+                      ? "Sincronizando..."
+                      : bitrixAutoSyncError
+                        ? bitrixAutoSyncError
+                        : bitrixAutoSyncedAt
+                          ? `Sincronização automática ${timeAgoLabel(Math.round((now - bitrixAutoSyncedAt) / 1000))}`
+                          : "Sincronização automática ativa"}
+                  </div>
+                )}
               </div>
               <div className="integration-actions">
                 <button
@@ -3707,6 +3799,16 @@ export function CommercialControl({
                 >
                   {bitrixExporting ? "Exportando..." : "Exportar todos para o Bitrix24"}
                 </button>
+                {integrationSettings?.bitrixConfigured && (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={isReadOnly || bitrixAutoSyncing}
+                    onClick={() => void runBitrixAutoSync()}
+                  >
+                    {bitrixAutoSyncing ? "Sincronizando..." : "Sincronizar agora"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="primary-button"
@@ -3782,6 +3884,53 @@ export function CommercialControl({
                       </button>
                     </div>
                   </div>
+                </div>
+              )}
+            </article>
+
+            <article className="panel rounded-3xl glassmorphism card-3d-inner">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-kicker">Google Workspace</span>
+                  <h3>Calendar, Gmail e Sheets</h3>
+                </div>
+              </div>
+              {!integrationSettings?.googleOAuthConfigured ? (
+                <p className="activity-empty">
+                  Preencha o Client ID e o Client Secret do Google acima (criados no Google Cloud
+                  Console) para habilitar a conexão.
+                </p>
+              ) : googleConnection?.connected ? (
+                <div className="integration-actions">
+                  <span className="proof-line">
+                    <i />
+                    Conectado como {googleConnection.googleAccountEmail ?? "conta Google"}
+                  </span>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={isReadOnly || sheetsExporting || deals.length === 0}
+                    onClick={() => void exportDealsToSheets()}
+                  >
+                    {sheetsExporting ? "Exportando..." : "Exportar negócios para Google Sheets"}
+                  </button>
+                  <button
+                    type="button"
+                    className="modal-cancel"
+                    disabled={isReadOnly || googleDisconnecting}
+                    onClick={() => void disconnectGoogle()}
+                  >
+                    {googleDisconnecting ? "Desconectando..." : "Desconectar"}
+                  </button>
+                </div>
+              ) : (
+                <div className="integration-actions">
+                  <a
+                    className={isReadOnly ? "primary-button disabled" : "primary-button"}
+                    href={isReadOnly ? undefined : "/api/integrations/google/auth"}
+                  >
+                    Conectar conta Google
+                  </a>
                 </div>
               )}
             </article>

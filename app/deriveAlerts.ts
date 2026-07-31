@@ -1,6 +1,15 @@
 import type { Deal, MonthlyMetric, OwnerPerformance, SellerGrowthTarget } from "./deriveMetrics";
 import type { RevenueClassification } from "./deriveRevenueIntelligence";
 import type { DataQualityIssue } from "./deriveHealthScore";
+import type { ActionItem } from "./deriveDashboard";
+
+export type IntegrationSyncState = {
+  id: string;
+  lastStatus: "ok" | "error";
+  lastError: string | null;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+};
 
 /**
  * Smart Alerts engine — deterministic rules over real data only. No LLM text
@@ -18,7 +27,8 @@ export type AlertCategory =
   | "pipeline"
   | "followup"
   | "qualidade_dados"
-  | "crescimento";
+  | "crescimento"
+  | "integracao";
 
 /** Persisted human interaction with an alert (dismiss/resolve), keyed by
  * the alert's deterministic `key` from `computeAlerts`. */
@@ -65,6 +75,8 @@ export function computeAlerts({
   sellerGrowthTargets,
   dataQualityIssues,
   revenueClassification,
+  actionItems,
+  integrationSyncStates,
   asOf,
 }: {
   deals: Deal[];
@@ -73,11 +85,14 @@ export function computeAlerts({
   sellerGrowthTargets: SellerGrowthTarget[];
   dataQualityIssues: DataQualityIssue[];
   revenueClassification: RevenueClassification;
+  actionItems: ActionItem[];
+  integrationSyncStates: IntegrationSyncState[];
   asOf: string;
 }): SmartAlert[] {
   const alerts: SmartAlert[] = [];
   const now = new Date(asOf).getTime();
   const currentMonthNumber = new Date(asOf).getMonth() + 1;
+  const today = asOf.slice(0, 10);
 
   // Revenue at risk (from the Revenue Intelligence classification).
   if (revenueClassification.emRisco.total > 0) {
@@ -196,6 +211,46 @@ export function computeAlerts({
       });
       void ownerRow;
     }
+  }
+
+  // Overdue action items (past due date, not yet concluded).
+  const overdueByOwner = new Map<string, ActionItem[]>();
+  for (const item of actionItems) {
+    if (item.status === "concluido") continue;
+    if (!item.dueDate || item.dueDate >= today) continue;
+    const key = item.owner ?? "Sem responsável";
+    const list = overdueByOwner.get(key) ?? [];
+    list.push(item);
+    overdueByOwner.set(key, list);
+  }
+  for (const [owner, items] of overdueByOwner) {
+    alerts.push({
+      key: `followup:acao-vencida:${slug(owner)}`,
+      title: `${owner}: ${items.length} ação(ões) do plano vencida(s)`,
+      description: items.map((item) => item.title).join(", "),
+      severity: items.length >= 3 ? "alto_risco" : "atencao",
+      category: "followup",
+      entity: owner,
+      financialImpact: null,
+      evidenceDealIds: [],
+      recommendation: "Revisar prazo e concluir ou reagendar cada item vencido do plano de ação.",
+    });
+  }
+
+  // Integration sync failures (e.g. last Bitrix24 import/export attempt failed).
+  for (const state of integrationSyncStates) {
+    if (state.lastStatus !== "error") continue;
+    alerts.push({
+      key: `integracao:falha:${slug(state.id)}`,
+      title: `Falha na sincronização com ${state.id === "bitrix" ? "Bitrix24" : state.id}`,
+      description: state.lastError ?? "A última tentativa de sincronização falhou.",
+      severity: "alto_risco",
+      category: "integracao",
+      entity: state.id,
+      financialImpact: null,
+      evidenceDealIds: [],
+      recommendation: "Verificar credenciais e conectividade em Integrações, depois sincronizar novamente.",
+    });
   }
 
   const severityRank: Record<AlertSeverity, number> = { critico: 0, alto_risco: 1, atencao: 2, informativo: 3 };

@@ -5,7 +5,7 @@ import { buildDashboardInsights } from "../deriveDashboard";
 import type { ActionHorizon, ActionItem, ActionStatus } from "../deriveDashboard";
 import { classifyRevenue, computeForecastScenarios } from "../deriveRevenueIntelligence";
 import { computeSalesHealthScore } from "../deriveHealthScore";
-import { computeAlerts, type AlertState } from "../deriveAlerts";
+import { computeAlerts, type AlertState, type IntegrationSyncState } from "../deriveAlerts";
 import { computeSellerPerformanceScore } from "../deriveSellerScore";
 import { ENTERPRISE_ROADMAP } from "../deriveEnterpriseRoadmap";
 import type { CommercialData, Objective, ObjectiveKeyResult } from "@/db/commercial-data";
@@ -57,6 +57,9 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
   const [sellers, setSellers] = useState<Seller[]>(data.sellers);
   const [growthTargets, setGrowthTargets] = useState<SellerGrowthTarget[]>(data.growthTargets);
   const [alertStates, setAlertStates] = useState<AlertState[]>(data.alertStates);
+  const [integrationSyncStates, setIntegrationSyncStates] = useState<IntegrationSyncState[]>(
+    data.integrationSyncStates,
+  );
   const [alertActionKey, setAlertActionKey] = useState<string | null>(null);
   const [alertJustifications, setAlertJustifications] = useState<Record<string, string>>({});
   const [drilldown, setDrilldown] = useState<{ title: string; dealIds: string[] } | null>(null);
@@ -117,12 +120,22 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
     bitrixWebhookUrl: "",
     apolloApiKey: "",
     googleApiKey: "",
+    googleClientId: "",
+    googleClientSecret: "",
     aiProvider: "auto" as "auto" | "openai" | "anthropic",
     openaiApiKey: "",
     anthropicApiKey: "",
   });
   const [integrationSaving, setIntegrationSaving] = useState(false);
   const [integrationError, setIntegrationError] = useState<string | null>(null);
+  const [googleConnection, setGoogleConnection] = useState<{
+    connected: boolean;
+    googleAccountEmail: string | null;
+  } | null>(null);
+  const [googleDisconnecting, setGoogleDisconnecting] = useState(false);
+  const [calendarReminderKey, setCalendarReminderKey] = useState<string | null>(null);
+  const [alertsDigestSending, setAlertsDigestSending] = useState(false);
+  const [sheetsExporting, setSheetsExporting] = useState(false);
 
   const [bitrixImportItems, setBitrixImportItems] = useState<BitrixImportItem[] | null>(null);
   const [bitrixImportSelected, setBitrixImportSelected] = useState<Set<string>>(new Set());
@@ -130,6 +143,10 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
   const [bitrixImportError, setBitrixImportError] = useState<string | null>(null);
   const [bitrixImportConfirming, setBitrixImportConfirming] = useState(false);
   const [bitrixExporting, setBitrixExporting] = useState(false);
+  const [bitrixAutoSyncing, setBitrixAutoSyncing] = useState(false);
+  const [bitrixAutoSyncedAt, setBitrixAutoSyncedAt] = useState<number | null>(null);
+  const [bitrixAutoSyncError, setBitrixAutoSyncError] = useState<string | null>(null);
+  const bitrixAutoSyncingRef = useRef(false);
   const [bitrixExportError, setBitrixExportError] = useState<string | null>(null);
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvImportError, setCsvImportError] = useState<string | null>(null);
@@ -194,14 +211,16 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
 
     async function poll() {
       try {
-        const [dealsRes, activityRes, sellersRes, actionItemsRes, growthPlanRes, alertsRes] = await Promise.all([
-          fetch("/api/deals", { cache: "no-store", signal: controller.signal }),
-          fetch("/api/activity?limit=20", { cache: "no-store", signal: controller.signal }),
-          fetch("/api/sellers", { cache: "no-store", signal: controller.signal }),
-          fetch("/api/action-items", { cache: "no-store", signal: controller.signal }),
-          fetch("/api/growth-plan", { cache: "no-store", signal: controller.signal }),
-          fetch("/api/alerts", { cache: "no-store", signal: controller.signal }),
-        ]);
+        const [dealsRes, activityRes, sellersRes, actionItemsRes, growthPlanRes, alertsRes, syncStateRes] =
+          await Promise.all([
+            fetch("/api/deals", { cache: "no-store", signal: controller.signal }),
+            fetch("/api/activity?limit=20", { cache: "no-store", signal: controller.signal }),
+            fetch("/api/sellers", { cache: "no-store", signal: controller.signal }),
+            fetch("/api/action-items", { cache: "no-store", signal: controller.signal }),
+            fetch("/api/growth-plan", { cache: "no-store", signal: controller.signal }),
+            fetch("/api/alerts", { cache: "no-store", signal: controller.signal }),
+            fetch("/api/integrations/sync-state", { cache: "no-store", signal: controller.signal }),
+          ]);
         if (!dealsRes.ok) throw new Error("sync failed");
         const dealsJson = (await dealsRes.json()) as { deals: Deal[]; targets: Target[] };
         if (cancelled) return;
@@ -239,6 +258,12 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
         if (alertsRes.ok) {
           const alertsJson = (await alertsRes.json()) as { alertStates: AlertState[] };
           if (!cancelled) setAlertStates(alertsJson.alertStates);
+        }
+        if (syncStateRes.ok) {
+          const syncStateJson = (await syncStateRes.json()) as {
+            integrationSyncStates: IntegrationSyncState[];
+          };
+          if (!cancelled) setIntegrationSyncStates(syncStateJson.integrationSyncStates);
         }
       } catch (error) {
         if (!cancelled && (error as Error).name !== "AbortError") {
@@ -280,13 +305,10 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
   const dashboardInsights = useMemo(
     () =>
       buildDashboardInsights({
-        deals,
         monthlyMetrics,
         historicalDeals: data.historicalDeals,
-        ownerPerformance,
-        asOf,
       }),
-    [deals, monthlyMetrics, data.historicalDeals, ownerPerformance, asOf],
+    [monthlyMetrics, data.historicalDeals],
   );
 
   const revenueClassification = useMemo(
@@ -330,14 +352,31 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
         sellerGrowthTargets: growthTargets,
         dataQualityIssues: data.dataQualityIssues,
         revenueClassification,
+        actionItems,
+        integrationSyncStates,
         asOf,
       }),
-    [deals, monthlyMetrics, ownerPerformance, growthTargets, data.dataQualityIssues, revenueClassification, asOf],
+    [
+      deals,
+      monthlyMetrics,
+      ownerPerformance,
+      growthTargets,
+      data.dataQualityIssues,
+      revenueClassification,
+      actionItems,
+      integrationSyncStates,
+      asOf,
+    ],
   );
 
   const alertStateByKey = useMemo(
     () => new Map(alertStates.map((state) => [state.key, state])),
     [alertStates],
+  );
+
+  const openAlerts = useMemo(
+    () => alerts.filter((alert) => (alertStateByKey.get(alert.key)?.status ?? "aberto") === "aberto"),
+    [alerts, alertStateByKey],
   );
 
   const dealsById = useMemo(() => new Map(deals.map((deal) => [deal.id, deal])), [deals]);
@@ -789,7 +828,14 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
 
   async function updateActionItem(
     id: string,
-    patch: Partial<{ title: string; description: string; owner: string | null; horizon: ActionHorizon; status: ActionStatus }>,
+    patch: Partial<{
+      title: string;
+      description: string;
+      owner: string | null;
+      horizon: ActionHorizon;
+      status: ActionStatus;
+      dueDate: string | null;
+    }>,
     options?: { silent?: boolean },
   ) {
     const previous = actionItems;
@@ -853,6 +899,7 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
       description: values.description.trim(),
       owner: values.owner.trim() || null,
       horizon: values.horizon,
+      dueDate: values.dueDate.trim() || null,
     });
   }
 
@@ -898,6 +945,8 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
         bitrixWebhookUrl: "",
         apolloApiKey: "",
         googleApiKey: "",
+        googleClientId: "",
+        googleClientSecret: "",
         aiProvider: refreshed.aiProvider,
         openaiApiKey: "",
         anthropicApiKey: "",
@@ -1001,6 +1050,150 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
       setBitrixExporting(false);
     }
   }
+
+  async function runBitrixAutoSync() {
+    if (bitrixAutoSyncingRef.current || isReadOnly || !integrationSettings?.bitrixConfigured) return;
+    bitrixAutoSyncingRef.current = true;
+    setBitrixAutoSyncing(true);
+    try {
+      const res = await fetch("/api/integrations/bitrix/sync", { method: "POST" });
+      const json = (await res.json()) as { pushed?: number; pulled?: number; failed?: number; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "Falha ao sincronizar com o Bitrix24.");
+      setBitrixAutoSyncedAt(Date.now());
+      setBitrixAutoSyncError(json.failed ? `${json.failed} negócio(s) falharam na última sincronização.` : null);
+    } catch (error) {
+      setBitrixAutoSyncError(
+        error instanceof Error ? error.message : "Falha ao sincronizar com o Bitrix24.",
+      );
+    } finally {
+      bitrixAutoSyncingRef.current = false;
+      setBitrixAutoSyncing(false);
+    }
+  }
+
+  useEffect(() => {
+    if (section !== "integracoes" || isReadOnly || !integrationSettings?.bitrixConfigured) return;
+    void runBitrixAutoSync();
+    const interval = setInterval(() => void runBitrixAutoSync(), 5 * 60_000);
+    return () => clearInterval(interval);
+  }, [section, isReadOnly, integrationSettings?.bitrixConfigured]);
+
+  async function loadGoogleConnection() {
+    try {
+      const res = await fetch("/api/integrations/google", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = (await res.json()) as { connected: boolean; googleAccountEmail: string | null };
+      setGoogleConnection(json);
+    } catch {
+      // Non-critical: the "Conectar conta Google" button just stays in its default state.
+    }
+  }
+
+  async function createCalendarReminder(alert: { key: string; title: string; description: string }) {
+    setCalendarReminderKey(alert.key);
+    try {
+      const res = await fetch("/api/integrations/google/calendar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: alert.title, description: alert.description }),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? "Falha ao criar lembrete no Calendar.");
+      showToast("success", "Lembrete criado no Google Calendar.");
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Falha ao criar lembrete no Calendar.");
+    } finally {
+      setCalendarReminderKey(null);
+    }
+  }
+
+  async function sendAlertsDigest() {
+    setAlertsDigestSending(true);
+    try {
+      const res = await fetch("/api/integrations/google/gmail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          alerts: openAlerts.map((alert) => ({
+            title: alert.title,
+            description: alert.description,
+            severity: alert.severity,
+            recommendation: alert.recommendation,
+          })),
+        }),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? "Falha ao enviar resumo por e-mail.");
+      showToast("success", "Resumo de alertas enviado por e-mail.");
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Falha ao enviar resumo por e-mail.");
+    } finally {
+      setAlertsDigestSending(false);
+    }
+  }
+
+  async function exportDealsToSheets() {
+    setSheetsExporting(true);
+    try {
+      const res = await fetch("/api/integrations/google/sheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deals: deals.map((deal) => ({
+            id: deal.id,
+            month: deal.month,
+            owner: deal.owner,
+            company: deal.company,
+            origin: deal.origin,
+            stage: deal.stage,
+            adjusted: deal.adjusted,
+            billed: deal.billed,
+          })),
+        }),
+      });
+      const json = (await res.json()) as { ok?: boolean; spreadsheetUrl?: string | null; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? "Falha ao exportar para o Google Sheets.");
+      showToast("success", "Negócios exportados para o Google Sheets.");
+      if (json.spreadsheetUrl) window.open(json.spreadsheetUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Falha ao exportar para o Google Sheets.");
+    } finally {
+      setSheetsExporting(false);
+    }
+  }
+
+  async function disconnectGoogle() {
+    setGoogleDisconnecting(true);
+    try {
+      const res = await fetch("/api/integrations/google", { method: "DELETE" });
+      if (!res.ok) throw new Error("Falha ao desconectar a conta Google.");
+      setGoogleConnection({ connected: false, googleAccountEmail: null });
+      showToast("success", "Conta Google desconectada.");
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Falha ao desconectar a conta Google.");
+    } finally {
+      setGoogleDisconnecting(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadGoogleConnection();
+
+    const params = new URLSearchParams(window.location.search);
+    const googleError = params.get("googleError");
+    const googleConnected = params.get("googleConnected");
+    if (googleError) {
+      showToast("error", `Falha ao conectar com o Google: ${googleError}`);
+    } else if (googleConnected) {
+      showToast("success", "Conta Google conectada.");
+    }
+    if (googleError || googleConnected) {
+      params.delete("googleError");
+      params.delete("googleConnected");
+      const query = params.toString();
+      window.history.replaceState(null, "", query ? `?${query}` : window.location.pathname);
+    }
+  }, []);
 
   async function handleCsvImport(file: File) {
     setCsvImporting(true);
@@ -1282,9 +1475,10 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
   const secondsSinceSync = Math.max(0, Math.round((now - lastSyncedAt) / 1000));
 
   if (section === "capa") {
-    const criticalCount =
-      dashboardInsights.internalBottlenecks.filter((item) => item.severity === "alta").length +
-      dashboardInsights.internalBottlenecks.filter((item) => item.severity === "média").length;
+    const criticalCount = openAlerts.filter(
+      (alert) =>
+        alert.severity === "critico" || alert.severity === "alto_risco" || alert.severity === "atencao",
+    ).length;
 
     const today = new Date(now);
     // Real time is only rendered after mount: an SSR-rendered clock would show the
@@ -1440,6 +1634,7 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
     section, setSection, search, setSearch, monthFilter, setMonthFilter, ownerFilter, setOwnerFilter, selectedOwner, setSelectedOwner,
     selectedSheet, setSelectedSheet, sheetSearch, setSheetSearch, sheetMode, setSheetMode,
     deals, setDeals, targets, setTargets, sellers, setSellers, growthTargets, setGrowthTargets, alertStates, setAlertStates,
+    integrationSyncStates, setIntegrationSyncStates,
     alertActionKey, setAlertActionKey, alertJustifications, setAlertJustifications, drilldown, setDrilldown, auditFilters, setAuditFilters,
     auditResults, setAuditResults, auditLoading, setAuditLoading, auditError, setAuditError, asOf, setAsOf, activity, setActivity,
     lastSyncedAt, setLastSyncedAt, syncError, setSyncError, now, setNow,
@@ -1451,11 +1646,14 @@ export function useCommercialState(data: CommercialData, user: any, isReadOnly: 
     showAllActivity, setShowAllActivity, showAllQualityIssues, setShowAllQualityIssues, showAllBottlenecks, setShowAllBottlenecks,
     integrationSettings, setIntegrationSettings, integrationForm, setIntegrationForm, integrationSaving, setIntegrationSaving, integrationError, setIntegrationError,
     bitrixImportItems, setBitrixImportItems, bitrixImportSelected, setBitrixImportSelected, bitrixImportLoading, setBitrixImportLoading, bitrixImportError, setBitrixImportError, bitrixImportConfirming, setBitrixImportConfirming, bitrixExporting, setBitrixExporting, bitrixExportError, setBitrixExportError, csvImporting, setCsvImporting, csvImportError, setCsvImportError,
+    bitrixAutoSyncing, bitrixAutoSyncedAt, bitrixAutoSyncError, runBitrixAutoSync,
+    googleConnection, googleDisconnecting, disconnectGoogle, calendarReminderKey, createCalendarReminder,
+    alertsDigestSending, sendAlertsDigest, sheetsExporting, exportDealsToSheets,
     leadQuery, setLeadQuery, leadResult, setLeadResult, leadLoading, setLeadLoading, leadError, setLeadError, leadPrefill, setLeadPrefill,
     aiReportOpen, setAiReportOpen, aiReportLoading, setAiReportLoading, aiReportError, setAiReportError, aiReportText, setAiReportText,
     objectives, setObjectives, objectiveModal, setObjectiveModal, objectiveModalSaving, setObjectiveModalSaving, objectiveModalError, setObjectiveModalError,
     owners, sellerRoleByName, derived, monthlyMetrics, executiveSummary, ownerPerformance, originPerformance, currentMonthNumber, currentMonthMetric,
-    dashboardInsights, revenueClassification, forecastScenarios, healthScore, alerts, alertStateByKey, dealsById, sellerScores, dataQualityMetrics, actionItemsByHorizon, origins,
+    dashboardInsights, revenueClassification, forecastScenarios, healthScore, alerts, alertStateByKey, openAlerts, dealsById, sellerScores, dataQualityMetrics, actionItemsByHorizon, origins,
     filteredDeals, dealsByStage, selectedOwnerDeals, selectedOwnerDashboard, selectedOwnerMaxMonth,
     visaoMonthLabel, visaoCompanyDeals, visaoCompanySummary, visaoSellerDeals, visaoSellerSummary,
     selectedOwnerAllDeals, selectedOwnerGrowthTargets, selectedOwnerGrowthPlan, selectedOwnerWon, selectedOwnerOpen,

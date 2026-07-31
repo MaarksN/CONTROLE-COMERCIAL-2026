@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeAlerts } from "../app/deriveAlerts";
 import { classifyRevenue } from "../app/deriveRevenueIntelligence";
-import { makeDeal, makeOwnerPerformance } from "./helpers";
+import { makeDeal, makeOwnerPerformance, makeActionItem } from "./helpers";
 import type { MonthlyMetric } from "../app/deriveMetrics";
 
 const ASOF = "2026-07-20T00:00:00.000Z";
@@ -35,6 +35,8 @@ describe("computeAlerts", () => {
       ownerPerformance: [],
       sellerGrowthTargets: [],
       dataQualityIssues: [],
+      actionItems: [],
+      integrationSyncStates: [],
       revenueClassification,
       asOf: ASOF,
     });
@@ -48,6 +50,8 @@ describe("computeAlerts", () => {
       ownerPerformance: [],
       sellerGrowthTargets: [],
       dataQualityIssues: [],
+      actionItems: [],
+      integrationSyncStates: [],
       revenueClassification: classifyRevenue([], { asOf: ASOF, ownerPerformance: [] }),
       asOf: ASOF,
     });
@@ -65,6 +69,8 @@ describe("computeAlerts", () => {
       ownerPerformance,
       sellerGrowthTargets: [],
       dataQualityIssues: [],
+      actionItems: [],
+      integrationSyncStates: [],
       revenueClassification: classifyRevenue([], { asOf: ASOF, ownerPerformance }),
       asOf: ASOF,
     });
@@ -82,6 +88,8 @@ describe("computeAlerts", () => {
       ownerPerformance: [],
       sellerGrowthTargets: [],
       dataQualityIssues: [],
+      actionItems: [],
+      integrationSyncStates: [],
       revenueClassification: classifyRevenue(deals, { asOf: ASOF, ownerPerformance: [] }),
       asOf: ASOF,
     });
@@ -99,6 +107,8 @@ describe("computeAlerts", () => {
       dataQualityIssues: [
         { severity: "alta", category: "Completude", title: "2 negócios sem origem", description: "d", owner: "Sales Ops" },
       ],
+      actionItems: [],
+      integrationSyncStates: [],
       revenueClassification: classifyRevenue([], { asOf: ASOF, ownerPerformance: [] }),
       asOf: ASOF,
     });
@@ -116,10 +126,65 @@ describe("computeAlerts", () => {
         { owner: "Ana", year: 2026, monthNumber: currentMonth, month: "Julho", entryTarget: 0, realizedTarget: 1000 },
       ],
       dataQualityIssues: [],
+      actionItems: [],
+      integrationSyncStates: [],
       revenueClassification: classifyRevenue(deals, { asOf: ASOF, ownerPerformance: [] }),
       asOf: ASOF,
     });
     expect(alerts.some((a) => a.category === "crescimento" && a.entity === "Ana")).toBe(true);
+  });
+
+  it("flags an action item past its due date as an overdue follow-up alert", () => {
+    const actionItems = [
+      makeActionItem({ owner: "Beatriz", dueDate: "2026-07-01", status: "pendente" }),
+    ];
+    const alerts = computeAlerts({
+      deals: [],
+      monthlyMetrics: [],
+      ownerPerformance: [],
+      sellerGrowthTargets: [],
+      dataQualityIssues: [],
+      actionItems,
+      integrationSyncStates: [],
+      revenueClassification: classifyRevenue([], { asOf: ASOF, ownerPerformance: [] }),
+      asOf: ASOF,
+    });
+    expect(alerts.some((a) => a.key === "followup:acao-vencida:beatriz")).toBe(true);
+  });
+
+  it("does not flag an action item that is overdue but already concluded", () => {
+    const actionItems = [
+      makeActionItem({ owner: "Beatriz", dueDate: "2026-07-01", status: "concluido" }),
+    ];
+    const alerts = computeAlerts({
+      deals: [],
+      monthlyMetrics: [],
+      ownerPerformance: [],
+      sellerGrowthTargets: [],
+      dataQualityIssues: [],
+      actionItems,
+      integrationSyncStates: [],
+      revenueClassification: classifyRevenue([], { asOf: ASOF, ownerPerformance: [] }),
+      asOf: ASOF,
+    });
+    expect(alerts.some((a) => a.category === "followup")).toBe(false);
+  });
+
+  it("flags a failed integration sync attempt", () => {
+    const alerts = computeAlerts({
+      deals: [],
+      monthlyMetrics: [],
+      ownerPerformance: [],
+      sellerGrowthTargets: [],
+      dataQualityIssues: [],
+      actionItems: [],
+      integrationSyncStates: [
+        { id: "bitrix", lastStatus: "error", lastError: "Webhook inválido.", lastAttemptAt: ASOF, lastSuccessAt: null },
+      ],
+      revenueClassification: classifyRevenue([], { asOf: ASOF, ownerPerformance: [] }),
+      asOf: ASOF,
+    });
+    expect(alerts.some((a) => a.key === "integracao:falha:bitrix")).toBe(true);
   });
 
   it("sorts alerts by severity, most critical first", () => {
@@ -131,6 +196,8 @@ describe("computeAlerts", () => {
       dataQualityIssues: [
         { severity: "baixa", category: "x", title: "t1", description: "d", owner: "o" },
       ],
+      actionItems: [],
+      integrationSyncStates: [],
       revenueClassification: classifyRevenue([], { asOf: ASOF, ownerPerformance: [] }),
       asOf: ASOF,
     });

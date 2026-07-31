@@ -3,6 +3,7 @@ import { MONTH_NAMES } from "@/app/deriveMetrics";
 import { getDb } from "@/db";
 import { commercialDeals } from "@/db/schema";
 import { env } from "cloudflare:workers";
+import { recordIntegrationSyncResult } from "@/db/commercial-data";
 
 type ImportItem = {
   bitrixId: string;
@@ -89,9 +90,18 @@ export async function POST(request: Request) {
       detail: { count: items.length },
     });
 
+    await recordIntegrationSyncResult(env.DB, { id: "bitrix", ok: true });
+
     return Response.json({ imported: items.length });
   } catch (error) {
     console.error("POST /api/integrations/bitrix/import/confirm failed:", error);
+    if (env.DB) {
+      await recordIntegrationSyncResult(env.DB, {
+        id: "bitrix",
+        ok: false,
+        error: toRouteErrorMessage(error),
+      });
+    }
     return Response.json({ error: toRouteErrorMessage(error) }, { status: 500 });
   }
 }

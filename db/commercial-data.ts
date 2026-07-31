@@ -18,7 +18,7 @@ import {
   type ActionItem,
   type ActionStatus,
 } from "../app/deriveDashboard";
-import type { AlertState } from "../app/deriveAlerts";
+import type { AlertState, IntegrationSyncState } from "../app/deriveAlerts";
 import { getDb } from "./index";
 import { eq, sql, desc, asc, and } from "drizzle-orm";
 import {
@@ -32,6 +32,8 @@ import {
   sellerGrowthTargets as sgtTable,
   alertState as alertTable,
   integrationSettings as isettingsTable,
+  integrationSyncState as syncStateTable,
+  googleOauthTokens as googleTokensTable,
 } from "./schema";
 
 const SEED_VERSION = "atlas-commercial-2026-v1";
@@ -40,7 +42,10 @@ const SELLER_ROSTER_KEY = "team_roster";
 const ACTION_ITEMS_SEED_KEY = "action_items_seed_v1";
 const EXTRA_MONTHS_BACKFILL_KEY = "extra_month_targets_v1";
 const ADMIN_SEED_KEY = "admin_role_seed_v1";
-const BATCH_SIZE = 40;
+// D1 caps bound parameters per statement at 100; commercialDeals binds 14
+// columns/row, so this must stay small enough that batch_size * widest_row
+// column count (14) stays comfortably under that cap.
+const BATCH_SIZE = 6;
 
 const EDITABLE_ROLES = new Set(
   commercialDataJson.governance.roles.filter((role) => role.edit).map((role) => role.role),
@@ -105,6 +110,7 @@ export type CommercialData = {
   actionItems: ActionItem[];
   growthTargets: SellerGrowthTarget[];
   alertStates: AlertState[];
+  integrationSyncStates: IntegrationSyncState[];
   objectives: StaticData["objectives"];
   governance: StaticData["governance"];
   dataQualityIssues: StaticData["dataQualityIssues"];
@@ -465,6 +471,7 @@ export async function readActionItems(database: D1Database): Promise<ActionItem[
     horizon: row.horizon as ActionHorizon,
     status: row.status as ActionStatus,
     source: row.source,
+    dueDate: row.dueDate,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     createdBy: row.createdBy,
@@ -480,6 +487,7 @@ export async function addActionItem(
     owner: string | null;
     horizon: ActionHorizon;
     source: string | null;
+    dueDate: string | null;
     actorEmail: string;
   },
 ): Promise<ActionItem> {
@@ -497,6 +505,7 @@ export async function addActionItem(
       horizon: input.horizon,
       status: "pendente",
       source: input.source,
+      dueDate: input.dueDate,
       createdBy: input.actorEmail,
       updatedBy: input.actorEmail,
     });
@@ -511,6 +520,7 @@ export async function addActionItem(
     horizon: row.horizon as ActionHorizon,
     status: row.status as ActionStatus,
     source: row.source,
+    dueDate: row.dueDate,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     createdBy: row.createdBy,
@@ -527,6 +537,7 @@ export async function updateActionItem(
     owner: string | null;
     horizon: ActionHorizon;
     status: ActionStatus;
+    dueDate: string | null;
   }>,
   actorEmail: string,
 ): Promise<ActionItem | null> {
@@ -547,6 +558,7 @@ export async function updateActionItem(
       owner: patch.owner !== undefined ? patch.owner : existing.owner,
       horizon: patch.horizon ?? existing.horizon,
       status: patch.status ?? existing.status,
+      dueDate: patch.dueDate !== undefined ? patch.dueDate : existing.dueDate,
       updatedBy: actorEmail,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     })
@@ -562,6 +574,7 @@ export async function updateActionItem(
     horizon: row.horizon as ActionHorizon,
     status: row.status as ActionStatus,
     source: row.source,
+    dueDate: row.dueDate,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     createdBy: row.createdBy,
@@ -590,6 +603,7 @@ export async function deleteActionItem(
     horizon: existing.horizon as ActionHorizon,
     status: existing.status as ActionStatus,
     source: existing.source,
+    dueDate: existing.dueDate,
     createdAt: existing.createdAt,
     updatedAt: existing.updatedAt,
     createdBy: existing.createdBy,
@@ -701,6 +715,156 @@ export async function upsertSellerGrowthTarget(
   };
 }
 
+async function ensureIntegrationSyncStateTable(database: D1Database) {
+  const db = getDb();
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS integration_sync_state (
+      id text PRIMARY KEY NOT NULL,
+      last_status text DEFAULT 'ok' NOT NULL,
+      last_error text,
+      last_attempt_at text,
+      last_success_at text
+    )
+  `);
+}
+
+export async function readIntegrationSyncStates(
+  database: D1Database,
+): Promise<IntegrationSyncState[]> {
+  await ensureIntegrationSyncStateTable(database);
+  const db = getDb();
+  const rows = await db.select().from(syncStateTable).all();
+  return rows.map((row) => ({
+    id: row.id,
+    lastStatus: row.lastStatus as IntegrationSyncState["lastStatus"],
+    lastError: row.lastError,
+    lastAttemptAt: row.lastAttemptAt,
+    lastSuccessAt: row.lastSuccessAt,
+  }));
+}
+
+export async function recordIntegrationSyncResult(
+  database: D1Database,
+  input: { id: string; ok: boolean; error?: string | null },
+): Promise<void> {
+  await ensureIntegrationSyncStateTable(database);
+  const db = getDb();
+  const now = sql`CURRENT_TIMESTAMP`;
+
+  await db
+    .insert(syncStateTable)
+    .values({
+      id: input.id,
+      lastStatus: input.ok ? "ok" : "error",
+      lastError: input.ok ? null : (input.error ?? "Falha desconhecida."),
+      lastAttemptAt: now,
+      lastSuccessAt: input.ok ? now : null,
+    })
+    .onConflictDoUpdate({
+      target: syncStateTable.id,
+      set: {
+        lastStatus: input.ok ? "ok" : "error",
+        lastError: input.ok ? null : (input.error ?? "Falha desconhecida."),
+        lastAttemptAt: now,
+        ...(input.ok ? { lastSuccessAt: now } : {}),
+      },
+    });
+}
+
+async function ensureGoogleOAuthTokensTable(database: D1Database) {
+  const db = getDb();
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS google_oauth_tokens (
+      user_email text PRIMARY KEY NOT NULL,
+      access_token text NOT NULL,
+      refresh_token text,
+      expires_at text NOT NULL,
+      scopes text DEFAULT '' NOT NULL,
+      google_account_email text,
+      updated_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    )
+  `);
+}
+
+export type GoogleOAuthToken = {
+  userEmail: string;
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: string;
+  scopes: string;
+  googleAccountEmail: string | null;
+  updatedAt: string;
+};
+
+export async function readGoogleOAuthToken(
+  database: D1Database,
+  userEmail: string,
+): Promise<GoogleOAuthToken | null> {
+  await ensureGoogleOAuthTokensTable(database);
+  const db = getDb();
+  const row = await db
+    .select()
+    .from(googleTokensTable)
+    .where(eq(googleTokensTable.userEmail, userEmail))
+    .get();
+  if (!row) return null;
+  return {
+    userEmail: row.userEmail,
+    accessToken: row.accessToken,
+    refreshToken: row.refreshToken,
+    expiresAt: row.expiresAt,
+    scopes: row.scopes,
+    googleAccountEmail: row.googleAccountEmail,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export async function upsertGoogleOAuthToken(
+  database: D1Database,
+  input: {
+    userEmail: string;
+    accessToken: string;
+    refreshToken: string | null;
+    expiresAt: string;
+    scopes: string;
+    googleAccountEmail: string | null;
+  },
+): Promise<void> {
+  await ensureGoogleOAuthTokensTable(database);
+  const db = getDb();
+
+  await db
+    .insert(googleTokensTable)
+    .values({
+      userEmail: input.userEmail,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      expiresAt: input.expiresAt,
+      scopes: input.scopes,
+      googleAccountEmail: input.googleAccountEmail,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    })
+    .onConflictDoUpdate({
+      target: googleTokensTable.userEmail,
+      set: {
+        accessToken: sql`excluded.access_token`,
+        // A refresh token is only issued on the very first consent (prompt=consent);
+        // keep the existing one on subsequent token refreshes where Google omits it.
+        refreshToken: input.refreshToken ?? sql`${googleTokensTable.refreshToken}`,
+        expiresAt: sql`excluded.expires_at`,
+        scopes: sql`excluded.scopes`,
+        googleAccountEmail: sql`excluded.google_account_email`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      },
+    });
+}
+
+export async function deleteGoogleOAuthToken(database: D1Database, userEmail: string): Promise<void> {
+  await ensureGoogleOAuthTokensTable(database);
+  const db = getDb();
+  await db.delete(googleTokensTable).where(eq(googleTokensTable.userEmail, userEmail)).run();
+}
+
 async function ensureAlertStateTable(database: D1Database) {
   const db = getDb();
   await db.run(sql`
@@ -773,6 +937,8 @@ export type IntegrationSettings = {
   bitrixWebhookUrl: string | null;
   apolloApiKey: string | null;
   googleApiKey: string | null;
+  googleClientId: string | null;
+  googleClientSecret: string | null;
   aiProvider: "auto" | "openai" | "anthropic";
   openaiApiKey: string | null;
   anthropicApiKey: string | null;
@@ -784,6 +950,8 @@ const EMPTY_INTEGRATION_SETTINGS: IntegrationSettings = {
   bitrixWebhookUrl: null,
   apolloApiKey: null,
   googleApiKey: null,
+  googleClientId: null,
+  googleClientSecret: null,
   aiProvider: "auto",
   openaiApiKey: null,
   anthropicApiKey: null,
@@ -799,6 +967,8 @@ async function ensureIntegrationSettingsTable(database: D1Database) {
       bitrix_webhook_url text,
       apollo_api_key text,
       google_api_key text,
+      google_client_id text,
+      google_client_secret text,
       ai_provider text DEFAULT 'auto' NOT NULL,
       openai_api_key text,
       anthropic_api_key text,
@@ -821,6 +991,8 @@ export async function readIntegrationSettings(database: D1Database): Promise<Int
     bitrixWebhookUrl: row.bitrixWebhookUrl,
     apolloApiKey: row.apolloApiKey,
     googleApiKey: row.googleApiKey,
+    googleClientId: row.googleClientId,
+    googleClientSecret: row.googleClientSecret,
     aiProvider: (row.aiProvider as IntegrationSettings["aiProvider"]) || "auto",
     openaiApiKey: row.openaiApiKey,
     anthropicApiKey: row.anthropicApiKey,
@@ -835,6 +1007,8 @@ export async function upsertIntegrationSettings(
     bitrixWebhookUrl?: string | null;
     apolloApiKey?: string | null;
     googleApiKey?: string | null;
+    googleClientId?: string | null;
+    googleClientSecret?: string | null;
     aiProvider?: IntegrationSettings["aiProvider"];
     openaiApiKey?: string | null;
     anthropicApiKey?: string | null;
@@ -848,6 +1022,9 @@ export async function upsertIntegrationSettings(
     bitrixWebhookUrl: input.bitrixWebhookUrl !== undefined ? input.bitrixWebhookUrl : current.bitrixWebhookUrl,
     apolloApiKey: input.apolloApiKey !== undefined ? input.apolloApiKey : current.apolloApiKey,
     googleApiKey: input.googleApiKey !== undefined ? input.googleApiKey : current.googleApiKey,
+    googleClientId: input.googleClientId !== undefined ? input.googleClientId : current.googleClientId,
+    googleClientSecret:
+      input.googleClientSecret !== undefined ? input.googleClientSecret : current.googleClientSecret,
     aiProvider: input.aiProvider ?? current.aiProvider,
     openaiApiKey: input.openaiApiKey !== undefined ? input.openaiApiKey : current.openaiApiKey,
     anthropicApiKey: input.anthropicApiKey !== undefined ? input.anthropicApiKey : current.anthropicApiKey,
@@ -862,6 +1039,8 @@ export async function upsertIntegrationSettings(
       bitrixWebhookUrl: next.bitrixWebhookUrl,
       apolloApiKey: next.apolloApiKey,
       googleApiKey: next.googleApiKey,
+      googleClientId: next.googleClientId,
+      googleClientSecret: next.googleClientSecret,
       aiProvider: next.aiProvider,
       openaiApiKey: next.openaiApiKey,
       anthropicApiKey: next.anthropicApiKey,
@@ -874,6 +1053,8 @@ export async function upsertIntegrationSettings(
         bitrixWebhookUrl: sql`excluded.bitrix_webhook_url`,
         apolloApiKey: sql`excluded.apollo_api_key`,
         googleApiKey: sql`excluded.google_api_key`,
+        googleClientId: sql`excluded.google_client_id`,
+        googleClientSecret: sql`excluded.google_client_secret`,
         aiProvider: sql`excluded.ai_provider`,
         openaiApiKey: sql`excluded.openai_api_key`,
         anthropicApiKey: sql`excluded.anthropic_api_key`,
@@ -1009,6 +1190,7 @@ function buildFromStaticJson(asOf: string): CommercialData {
     horizon: item.horizon,
     status: "pendente",
     source: item.source,
+    dueDate: null,
     createdAt: commercialDataJson.meta.generatedAt,
     updatedAt: commercialDataJson.meta.generatedAt,
     createdBy: "import",
@@ -1026,6 +1208,7 @@ function buildFromStaticJson(asOf: string): CommercialData {
     actionItems,
     growthTargets: [],
     alertStates: [],
+    integrationSyncStates: [],
     objectives: commercialDataJson.objectives,
     governance: commercialDataJson.governance,
     dataQualityIssues: commercialDataJson.dataQualityIssues,
@@ -1041,12 +1224,13 @@ export async function loadCommercialData(): Promise<CommercialData> {
   try {
     const { deals, targets } = await readDealsAndTargets(env.DB);
     const db = getDb();
-    const [sellers, actionItems, growthTargets, alertStates, objectiveResult, workbookResult] =
+    const [sellers, actionItems, growthTargets, alertStates, integrationSyncStates, objectiveResult, workbookResult] =
       await Promise.all([
         readSellerRoster(env.DB),
         readActionItems(env.DB),
         readSellerGrowthTargets(env.DB),
         readAlertStates(env.DB),
+        readIntegrationSyncStates(env.DB),
         db.select({ payloadJson: objectives.payloadJson }).from(objectives).orderBy(asc(objectives.id)).all(),
         db.select().from(workbookRows).orderBy(asc(workbookRows.id)).all(),
       ]);
@@ -1094,6 +1278,7 @@ export async function loadCommercialData(): Promise<CommercialData> {
       actionItems,
       growthTargets,
       alertStates,
+      integrationSyncStates,
       objectives: objectiveResult.map((r) => JSON.parse(r.payloadJson) as StaticData["objectives"][number]),
       governance: commercialDataJson.governance,
       dataQualityIssues: commercialDataJson.dataQualityIssues,

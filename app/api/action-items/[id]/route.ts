@@ -26,6 +26,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       owner: string | null;
       horizon: ActionHorizon;
       status: ActionStatus;
+      dueDate: string | null;
     }> = {};
 
     if (payload.title !== undefined) {
@@ -51,6 +52,10 @@ export async function PATCH(request: Request, context: RouteContext) {
         return Response.json({ error: "Status inválido." }, { status: 400 });
       }
       patch.status = payload.status as ActionStatus;
+    }
+    if (payload.dueDate !== undefined) {
+      patch.dueDate =
+        typeof payload.dueDate === "string" && payload.dueDate.trim() ? payload.dueDate.trim() : null;
     }
 
     const actionItem = await updateActionItem(env.DB, id, patch, user.email);

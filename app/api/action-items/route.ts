@@ -40,6 +40,8 @@ export async function POST(request: Request) {
     const horizon = HORIZONS.includes(payload.horizon as ActionHorizon)
       ? (payload.horizon as ActionHorizon)
       : "h1";
+    const dueDate =
+      typeof payload.dueDate === "string" && payload.dueDate.trim() ? payload.dueDate.trim() : null;
 
     if (!title) {
       return Response.json({ error: "Título é obrigatório." }, { status: 400 });
@@ -51,6 +53,7 @@ export async function POST(request: Request) {
       owner,
       horizon,
       source: "Interno",
+      dueDate,
       actorEmail: user.email,
     });
 

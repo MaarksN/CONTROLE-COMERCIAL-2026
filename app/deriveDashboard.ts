@@ -1,4 +1,4 @@
-import { MONTH_NAMES, type Deal, type MonthlyMetric, type OwnerPerformance } from "./deriveMetrics";
+import { MONTH_NAMES, type MonthlyMetric } from "./deriveMetrics";
 
 export type HistoricalDeal = {
   id: string;
@@ -24,12 +24,6 @@ export type MonthComparison = {
   deltaPct: number | null;
 };
 
-export type Bottleneck = {
-  label: string;
-  detail: string;
-  severity: "alta" | "média" | "baixa";
-};
-
 export type DashboardInsights = {
   monthlyComparison: MonthComparison[];
   yoy: {
@@ -46,7 +40,6 @@ export type DashboardInsights = {
     cumulativeAdjusted: number;
     cumulativeTarget: number;
   }>;
-  internalBottlenecks: Bottleneck[];
 };
 
 function round(value: number, decimals = 2) {
@@ -55,20 +48,12 @@ function round(value: number, decimals = 2) {
 }
 
 export function buildDashboardInsights({
-  deals,
   monthlyMetrics,
   historicalDeals,
-  ownerPerformance,
-  asOf,
 }: {
-  deals: Deal[];
   monthlyMetrics: MonthlyMetric[];
   historicalDeals: HistoricalDeal[];
-  ownerPerformance: OwnerPerformance[];
-  asOf: string;
 }): DashboardInsights {
-  const now = new Date(asOf).getTime();
-
   const sold2025ByMonth = new Map<number, number>();
   const billed2025ByMonth = new Map<number, number>();
   for (const deal of historicalDeals) {
@@ -126,55 +111,6 @@ export function buildDashboardInsights({
     };
   });
 
-  const internalBottlenecks: Bottleneck[] = [];
-
-  const criticalMonths = monthlyMetrics.filter((m) => m.health === "crítico");
-  if (criticalMonths.length > 0) {
-    internalBottlenecks.push({
-      label: `${criticalMonths.length} mês(es) crítico(s)`,
-      detail: `${criticalMonths.map((m) => m.month).join(", ")} — atingimento abaixo de 70% da meta.`,
-      severity: "alta",
-    });
-  }
-  const attentionMonths = monthlyMetrics.filter((m) => m.health === "atenção");
-  if (attentionMonths.length > 0) {
-    internalBottlenecks.push({
-      label: `${attentionMonths.length} mês(es) em atenção`,
-      detail: `${attentionMonths.map((m) => m.month).join(", ")} — entre 70% e 100% da meta.`,
-      severity: "média",
-    });
-  }
-
-  const totalAdjusted = ownerPerformance.reduce((sum, o) => sum + o.adjusted, 0);
-  const topOwner = ownerPerformance[0];
-  if (topOwner && totalAdjusted > 0) {
-    const share = topOwner.adjusted / totalAdjusted;
-    if (share >= 0.35) {
-      internalBottlenecks.push({
-        label: `Concentração de carteira em ${topOwner.owner}`,
-        detail: `${topOwner.owner} responde por ${(share * 100).toFixed(1).replace(".", ",")}% da receita ajustada (${topOwner.deals} negócios).`,
-        severity: share >= 0.5 ? "alta" : "média",
-      });
-    }
-  }
-
-  const staleDeals = deals
-    .filter((deal) => deal.stage !== "pago")
-    .map((deal) => ({
-      deal,
-      daysSinceUpdate: Math.round((now - new Date(deal.updatedAt).getTime()) / 86_400_000),
-    }))
-    .filter((row) => row.daysSinceUpdate >= 30)
-    .sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
-  if (staleDeals.length > 0) {
-    const oldest = staleDeals[0];
-    internalBottlenecks.push({
-      label: `${staleDeals.length} negócio(s) parado(s) há 30+ dias`,
-      detail: `Mais antigo: "${oldest.deal.company}" (${oldest.deal.owner}) sem atualização há ${oldest.daysSinceUpdate} dias, etapa "${oldest.deal.stage}".`,
-      severity: staleDeals.length >= 5 ? "alta" : "média",
-    });
-  }
-
   return {
     monthlyComparison,
     yoy: {
@@ -186,7 +122,6 @@ export function buildDashboardInsights({
       totalMonths2026: monthlyMetrics.length,
     },
     progression,
-    internalBottlenecks,
   };
 }
 
@@ -298,6 +233,7 @@ export type ActionItem = {
   horizon: ActionHorizon;
   status: ActionStatus;
   source: string | null;
+  dueDate: string | null;
   createdAt: string;
   updatedAt: string;
   createdBy: string | null;
