@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Montserrat } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
+import "./forecast.css";
 
 const montserrat = Montserrat({
   variable: "--font-atlas",

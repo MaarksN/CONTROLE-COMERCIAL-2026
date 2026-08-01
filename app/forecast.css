@@ -1,0 +1,817 @@
+/* ==================================================================== *
+ * Forecast Comercial — réplica do relatório Bitrix24 "Atlas GR".
+ *
+ * Usa os mesmos tokens `--atlas-*` de globals.css, então acompanha o tema
+ * claro/escuro sem cores fixas. Prefixo `fc-` para não colidir com as
+ * classes já existentes da central.
+ * ==================================================================== */
+
+.fc-band {
+  background: var(--atlas-band);
+  color: var(--atlas-band-ink);
+  border-radius: 18px;
+  padding: 26px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fc-band-top {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.fc-band-logo {
+  background: #ffffff;
+  color: #2f2f2f;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+
+.fc-band-logo i {
+  color: var(--atlas-orange);
+  font-style: normal;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.fc-band-title h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  color: var(--atlas-band-ink);
+}
+
+.fc-band-title p {
+  margin: 5px 0 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.92rem;
+}
+
+.fc-band-pill {
+  align-self: flex-start;
+  background: var(--atlas-band-soft);
+  color: rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  padding: 9px 18px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* -------------------------------- KPIs -------------------------------- */
+
+.fc-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 16px;
+}
+
+.fc-kpi {
+  background: var(--atlas-white);
+  border: 1px solid var(--atlas-line);
+  border-radius: 12px;
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 1px 2px rgba(47, 47, 47, 0.04);
+}
+
+.fc-kpi > span {
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--atlas-muted);
+  line-height: 1.35;
+}
+
+.fc-kpi > strong {
+  font-size: 2.4rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--atlas-graphite);
+}
+
+.fc-kpi > small {
+  font-size: 0.85rem;
+  color: var(--atlas-muted);
+  line-height: 1.45;
+}
+
+.fc-kpi-won {
+  border-color: var(--atlas-success);
+  border-width: 2px;
+}
+
+.fc-kpi-won > strong {
+  color: var(--atlas-success);
+}
+
+.fc-kpi-risk > strong {
+  color: var(--atlas-danger);
+}
+
+/* ------------------------------ Callout ------------------------------ */
+
+.fc-callout {
+  background: color-mix(in srgb, var(--atlas-amber) 12%, var(--atlas-white));
+  border: 1px solid color-mix(in srgb, var(--atlas-amber) 34%, transparent);
+  border-radius: 12px;
+  padding: 18px 22px;
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--atlas-graphite);
+}
+
+.fc-callout b {
+  color: var(--atlas-orange-2);
+  font-weight: 800;
+}
+
+/* --------------------------- Título de bloco -------------------------- */
+
+.fc-heading {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 6px 0 2px;
+}
+
+.fc-heading h3 {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--atlas-graphite);
+}
+
+.fc-heading::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--atlas-line);
+}
+
+/* --------------------------- Taxas de conversão ----------------------- */
+
+.fc-rate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.fc-rate {
+  background: var(--atlas-white);
+  border: 1px solid var(--atlas-line);
+  border-radius: 12px;
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.fc-rate-source {
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--atlas-orange);
+}
+
+.fc-rate-flow {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--atlas-graphite);
+  line-height: 1.4;
+}
+
+.fc-rate strong {
+  font-size: 1.95rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--atlas-graphite);
+  line-height: 1;
+}
+
+.fc-bar {
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--atlas-line) 70%, transparent);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.fc-bar b {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--atlas-orange);
+}
+
+/* ------------------------------- Funil -------------------------------- */
+
+.fc-funnel {
+  background: var(--atlas-white);
+  border: 1px solid var(--atlas-line);
+  border-radius: 14px;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fc-funnel > h4 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--atlas-graphite);
+}
+
+.fc-funnel > p {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: var(--atlas-muted);
+}
+
+.fc-funnel-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.1fr) 3fr auto;
+  align-items: center;
+  gap: 16px;
+  padding: 7px 0;
+}
+
+.fc-funnel-row > span {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--atlas-graphite);
+}
+
+.fc-funnel-row > b {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--atlas-graphite);
+  text-align: right;
+  min-width: 42px;
+}
+
+.fc-funnel-track {
+  height: 22px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--atlas-line) 70%, transparent);
+  overflow: hidden;
+}
+
+.fc-funnel-track i {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+}
+
+/* Profundidade da etapa: laranja no topo, amarelo no fundo do funil. */
+.fc-funnel-track i[data-depth="0"] {
+  background: var(--atlas-orange);
+}
+
+.fc-funnel-track i[data-depth="1"] {
+  background: var(--atlas-amber);
+}
+
+.fc-funnel-track i[data-depth="2"] {
+  background: var(--atlas-yellow);
+}
+
+.fc-funnel-note {
+  font-size: 0.8rem;
+  color: var(--atlas-muted);
+  margin: -4px 0 6px;
+  padding-left: 4px;
+}
+
+.fc-funnel-foot {
+  margin-top: 10px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--atlas-orange);
+}
+
+/* --------------------------- Cards por item --------------------------- */
+
+.fc-item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 18px;
+}
+
+.fc-item {
+  background: var(--atlas-white);
+  border: 1px solid var(--atlas-line);
+  border-left: 5px solid var(--atlas-muted);
+  border-radius: 12px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fc-item-neutral {
+  border-left-color: var(--atlas-band);
+}
+
+.fc-item-open {
+  border-left-color: var(--atlas-orange);
+}
+
+.fc-item-pending {
+  border-left-color: var(--atlas-yellow);
+}
+
+.fc-item-won {
+  border-left-color: var(--atlas-success);
+}
+
+.fc-item-lost {
+  border-left-color: var(--atlas-danger);
+}
+
+.fc-item-source {
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--atlas-muted);
+}
+
+.fc-item h4 {
+  margin: 2px 0 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--atlas-graphite);
+}
+
+.fc-item > p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--atlas-muted);
+  line-height: 1.45;
+}
+
+.fc-item-count {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fc-item-count strong {
+  font-size: 2.3rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--atlas-graphite);
+}
+
+.fc-item-open .fc-item-count strong {
+  color: var(--atlas-orange);
+}
+
+.fc-item-pending .fc-item-count strong {
+  color: var(--atlas-amber-2);
+}
+
+.fc-item-won .fc-item-count strong {
+  color: var(--atlas-success);
+}
+
+.fc-item-lost .fc-item-count strong {
+  color: var(--atlas-danger);
+}
+
+.fc-item-count span {
+  font-size: 0.88rem;
+  color: var(--atlas-muted);
+}
+
+.fc-item-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--atlas-graphite);
+}
+
+.fc-item-sellers {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--atlas-line);
+  display: flex;
+  flex-direction: column;
+}
+
+.fc-seller-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 14px;
+  align-items: baseline;
+  padding: 5px 0;
+  font-size: 0.88rem;
+}
+
+.fc-seller-row > span {
+  font-weight: 700;
+  color: var(--atlas-graphite);
+}
+
+.fc-seller-row > i {
+  font-style: normal;
+  color: var(--atlas-muted);
+}
+
+.fc-seller-row > b {
+  font-weight: 600;
+  color: var(--atlas-graphite);
+  min-width: 96px;
+  text-align: right;
+}
+
+/* --------------------------- Gargalos e plano ------------------------- */
+
+.fc-bottleneck {
+  background: var(--atlas-white);
+  border: 1px solid var(--atlas-line);
+  border-radius: 14px;
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* Sem isto, filhos de grid/flex se recusam a encolher e estouram a viewport. */
+  min-width: 0;
+}
+
+.fc-bottleneck > * {
+  min-width: 0;
+}
+
+.fc-bottleneck-headline,
+.fc-bottleneck p {
+  overflow-wrap: anywhere;
+}
+
+.fc-bottleneck-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.fc-rank {
+  background: var(--atlas-band);
+  color: var(--atlas-band-ink);
+  border-radius: 9px;
+  min-width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.fc-bottleneck-head h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--atlas-graphite);
+  flex: 1;
+  min-width: 220px;
+}
+
+.fc-tag {
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.fc-tag-critico {
+  background: color-mix(in srgb, var(--atlas-danger) 12%, transparent);
+  color: var(--atlas-danger);
+  border-color: color-mix(in srgb, var(--atlas-danger) 32%, transparent);
+}
+
+.fc-tag-alto {
+  background: color-mix(in srgb, var(--atlas-orange) 12%, transparent);
+  color: var(--atlas-orange-2);
+  border-color: color-mix(in srgb, var(--atlas-orange) 32%, transparent);
+}
+
+.fc-tag-medio {
+  background: color-mix(in srgb, var(--atlas-amber) 14%, transparent);
+  color: var(--atlas-amber-2);
+  border-color: color-mix(in srgb, var(--atlas-amber) 34%, transparent);
+}
+
+.fc-tag-conf {
+  background: transparent;
+  color: var(--atlas-muted);
+  border-color: var(--atlas-line);
+}
+
+.fc-bottleneck-headline {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--atlas-orange-2);
+}
+
+.fc-bottleneck p {
+  margin: 0;
+  font-size: 0.93rem;
+  line-height: 1.6;
+  color: var(--atlas-graphite);
+}
+
+.fc-bottleneck-impact {
+  background: color-mix(in srgb, var(--atlas-canvas) 60%, var(--atlas-white));
+  border-left: 3px solid var(--atlas-orange);
+  border-radius: 0 8px 8px 0;
+  padding: 12px 16px;
+  font-size: 0.9rem;
+}
+
+.fc-evidence {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fc-evidence li {
+  font-size: 0.83rem;
+  color: var(--atlas-muted);
+  font-variant-numeric: tabular-nums;
+  padding-left: 16px;
+  position: relative;
+  overflow-wrap: anywhere;
+}
+
+.fc-evidence li::before {
+  content: "\2192";
+  position: absolute;
+  left: 0;
+  color: var(--atlas-orange);
+}
+
+.fc-caveat {
+  font-size: 0.85rem;
+  color: var(--atlas-muted);
+  border-top: 1px dashed var(--atlas-line);
+  padding-top: 10px;
+  font-style: italic;
+}
+
+.fc-step {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--atlas-white);
+  border: 1px solid var(--atlas-line);
+  border-radius: 12px;
+}
+
+.fc-step-order {
+  background: var(--atlas-orange);
+  color: #ffffff;
+  border-radius: 9px;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.fc-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.fc-step-body > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fc-step-body > p {
+  margin: 0;
+  font-size: 0.96rem;
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--atlas-graphite);
+}
+
+.fc-step-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fc-chip {
+  border: 1px solid var(--atlas-line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.76rem;
+  color: var(--atlas-muted);
+  white-space: nowrap;
+}
+
+.fc-chip b {
+  color: var(--atlas-graphite);
+  font-weight: 700;
+}
+
+.fc-chip-urgent {
+  border-color: color-mix(in srgb, var(--atlas-danger) 40%, transparent);
+  color: var(--atlas-danger);
+}
+
+.fc-step-target {
+  font-size: 0.88rem;
+  color: var(--atlas-success);
+  font-weight: 700;
+}
+
+/*
+ * A evidência de aceite é uma frase, não um rótulo: precisa quebrar linha.
+ * Usar `.fc-chip` aqui (com nowrap) estourava a largura no mobile.
+ */
+.fc-step-evidence {
+  border: 1px solid var(--atlas-line);
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 0.78rem;
+  color: var(--atlas-muted);
+  line-height: 1.5;
+}
+
+/* ------------------------------ Tabelas ------------------------------- */
+
+.fc-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--atlas-line);
+  border-radius: 12px;
+  background: var(--atlas-white);
+}
+
+.fc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.87rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fc-table thead th {
+  background: var(--atlas-band);
+  color: var(--atlas-band-ink);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 11px 14px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.fc-table thead th:first-child {
+  text-align: left;
+}
+
+.fc-table tbody th {
+  text-align: left;
+  font-weight: 700;
+  color: var(--atlas-graphite);
+  padding: 10px 14px;
+  white-space: nowrap;
+  border-top: 1px solid var(--atlas-line);
+}
+
+.fc-table tbody td {
+  padding: 10px 14px;
+  text-align: right;
+  color: var(--atlas-graphite);
+  border-top: 1px solid var(--atlas-line);
+  white-space: nowrap;
+}
+
+.fc-pos {
+  color: var(--atlas-success);
+  font-weight: 700;
+}
+
+.fc-neg {
+  color: var(--atlas-danger);
+  font-weight: 700;
+}
+
+.fc-zero {
+  color: var(--atlas-muted);
+}
+
+.fc-table-row-accent th,
+.fc-table-row-accent td {
+  background: color-mix(in srgb, var(--atlas-success) 7%, transparent);
+}
+
+.fc-quarter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.fc-quarter {
+  background: var(--atlas-white);
+  border: 1px solid var(--atlas-line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fc-quarter span {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: var(--atlas-muted);
+}
+
+.fc-quarter strong {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.fc-quarter-total {
+  background: var(--atlas-band);
+  border-color: var(--atlas-band);
+}
+
+.fc-quarter-total span {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.fc-footnote {
+  font-size: 0.8rem;
+  color: var(--atlas-muted);
+  line-height: 1.6;
+  border-top: 1px solid var(--atlas-line);
+  padding-top: 16px;
+}
+
+@media (max-width: 720px) {
+  .fc-band {
+    padding: 20px;
+  }
+
+  .fc-band-title h2 {
+    font-size: 1.2rem;
+  }
+
+  .fc-funnel-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .fc-funnel-row > .fc-funnel-track {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .fc-step {
+    grid-template-columns: 1fr;
+  }
+}

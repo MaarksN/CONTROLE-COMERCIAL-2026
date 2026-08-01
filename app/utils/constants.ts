@@ -5,6 +5,7 @@ import type { Section } from "../CommercialControl";
 export const SECTION_ICONS: Record<Exclude<Section, "capa">, string> = {
       dashboard: "📊",
       inteligencia: "🧠",
+      forecast: "🔭",
       visao: "🗂️",
       pipeline: "🧩",
       okrs: "🎯",
@@ -47,13 +48,14 @@ export function nextActionStatus(status: ActionStatus): ActionStatus {
 export const navItems: Array<{ id: Exclude<Section, "capa">; label: string; index: string }> = [
       { id: "dashboard", label: "Dashboard", index: "00" },
       { id: "inteligencia", label: "Inteligência de receita", index: "01" },
-      { id: "visao", label: "Visão completa", index: "02" },
-      { id: "pipeline", label: "Negócios", index: "03" },
-      { id: "okrs", label: "OKRs", index: "04" },
-      { id: "equipe", label: "Equipe & canais", index: "05" },
-      { id: "governanca", label: "Governança", index: "06" },
-      { id: "dados", label: "Base completa", index: "07" },
-      { id: "integracoes", label: "Integrações", index: "08" },
+      { id: "forecast", label: "Forecast & gargalos", index: "02" },
+      { id: "visao", label: "Visão completa", index: "03" },
+      { id: "pipeline", label: "Negócios", index: "04" },
+      { id: "okrs", label: "OKRs", index: "05" },
+      { id: "equipe", label: "Equipe & canais", index: "06" },
+      { id: "governanca", label: "Governança", index: "07" },
+      { id: "dados", label: "Base completa", index: "08" },
+      { id: "integracoes", label: "Integrações", index: "09" },
     ];
 
 // Forward-looking growth plan horizon: between 20 and 24 months so a

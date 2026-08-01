@@ -1,13 +1,17 @@
 
 .dark {
-  --atlas-graphite: #f8fafc;
+  --atlas-graphite: #f5f3f0;
   --atlas-ink: #ffffff;
-  --atlas-white: #0f172a;
-  --atlas-canvas: #020617;
-  --atlas-line: #1e293b;
-  --atlas-muted: #94a3b8;
-  --shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
-  --glass-bg: rgba(15, 23, 42, 0.6);
+  --atlas-white: #242322;
+  --atlas-canvas: #171615;
+  --atlas-line: #35322f;
+  --atlas-muted: #a09c96;
+  /* No escuro a faixa clareia em vez de escurecer, senão some no fundo. */
+  --atlas-band: #302e2c;
+  --atlas-band-soft: #3d3a37;
+  --atlas-band-ink: #f5f3f0;
+  --shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.65);
+  --glass-bg: rgba(36, 35, 34, 0.62);
   --glass-border: rgba(255, 255, 255, 0.08);
 }
 
@@ -28,23 +32,35 @@ body {
 }
 
 
+/*
+ * Paleta alinhada ao relatório "Atlas GR — Forecast Comercial".
+ * Os nomes das variáveis são os mesmos de antes, então o ajuste de tom
+ * cascateia para toda a central sem tocar em nenhum componente.
+ * Antes: laranja slate-frio (#f97316 sobre #f8fafc). Agora: o laranja-tijolo
+ * e o off-white quente do relatório.
+ */
 :root {
-  --atlas-orange: #f97316;
-  --atlas-orange-2: #ea580c;
-  --atlas-amber: #f59e0b;
-  --atlas-amber-2: #d97706;
-  --atlas-graphite: #0f172a;
-  --atlas-ink: #020617;
+  --atlas-orange: #f4511e;
+  --atlas-orange-2: #e64a19;
+  --atlas-amber: #fb8c00;
+  --atlas-amber-2: #f57c00;
+  --atlas-yellow: #fdd835;
+  --atlas-graphite: #2f2f2f;
+  --atlas-ink: #1c1c1c;
   --atlas-white: #ffffff;
-  --atlas-canvas: #f8fafc;
-  --atlas-line: #e2e8f0;
-  --atlas-muted: #64748b;
-  --atlas-success: #10b981;
-  --atlas-danger: #ef4444;
-  --atlas-blue: #3b82f6;
-  --shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.08);
-  --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-border: rgba(15, 23, 42, 0.05);
+  --atlas-canvas: #f7f5f2;
+  --atlas-line: #e8e5e0;
+  --atlas-muted: #8c8a86;
+  --atlas-success: #2e7d32;
+  --atlas-danger: #d32f2f;
+  --atlas-blue: #1e6fd9;
+  /* Faixa escura do cabeçalho e dos cabeçalhos de tabela do relatório. */
+  --atlas-band: #2e2e2e;
+  --atlas-band-soft: #3d3d3d;
+  --atlas-band-ink: #ffffff;
+  --shadow: 0 10px 30px -5px rgba(47, 47, 47, 0.09);
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(47, 47, 47, 0.06);
   --font-atlas: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
