@@ -7,3 +7,7 @@ Nº,Tela,Módulo,Finalidade,Recursos presentes,Arquivo da imagem
 6,Equipe & canais,Equipe,Análise de desempenho,Lista de membros/canais,04-equipe-canais.png
 7,Governança,Governança,Rotinas operacionais,Status de ritos,05-governanca.png
 8,Base completa,Dados,Visualização crua de dados,Formato tabela,01-base-completa.png
+9,Cadastro de Negócio,Cadastros,Adicionar novo negócio,Formulário de deal,01-cadastro-de-negocio.png
+10,Cadastro de Vendedor,Cadastros,Adicionar membro à equipe,Formulário de vendedor,02-cadastro-de-vendedor.png
+11,Cadastro de Ação,Cadastros,Adicionar item de ação,Formulário de action item,03-cadastro-de-acao.png
+12,Integrações,Configurações,Configurar integrações externas,Botões de integração,01-integracoes.png
