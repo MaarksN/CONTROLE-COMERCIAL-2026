@@ -239,9 +239,9 @@ export type ChainedConversion = {
 const rateOf = (id: string) => CONVERSION_RATES.find((rate) => rate.id === id)?.rate ?? 0;
 
 /**
- * A taxa "geral" publicada (17,2%) é `contratos ÷ leads` da mesma competência,
- * mas numerador e denominador vêm de populações distintas: os 21 contratos de
- * julho não descendem dos 122 leads de julho. O produto das etapas dá outro
+ * A taxa "geral" publicada (19,7%) é `contratos ÷ leads` da mesma competência,
+ * mas numerador e denominador vêm de populações distintas: os 18 contratos de
+ * julho não descendem dos 117 leads de julho. O produto das etapas dá outro
  * número — e a distância entre os dois é o que dimensiona errado a meta de topo.
  */
 export function computeChainedConversion(): ChainedConversion {
@@ -291,7 +291,7 @@ export type WeightedForecast = {
 
 /**
  * Pondera cada bloco do pipeline aberto pela probabilidade real de chegar ao
- * contrato assinado, em vez de tratar R$ 77.994,10 como se fosse receita.
+ * contrato assinado, em vez de tratar R$ 66.570,60 como se fosse receita.
  */
 export function computeWeightedForecast(): WeightedForecast {
   const negotiation = findItemCard("em-negociacao");
@@ -578,6 +578,15 @@ export function identifyBottlenecks(gap: number): Bottleneck[] {
   const forecast = computeWeightedForecast();
   const closure = planGapClosure(gap);
 
+  const avaligisOpportunities = FUNNEL_PIPELINES.find((p) => p.source === "avaligis")?.stages.at(-1)?.count ?? 0;
+  const avanOpportunities = FUNNEL_PIPELINES.find((p) => p.source === "avan")?.stages[0]?.count ?? 0;
+  const financeiroPipeline = FUNNEL_PIPELINES.find((p) => p.source === "financeiro");
+  const financeiroEntered = financeiroPipeline?.stages[0]?.count ?? 0;
+  const financeiroSigned = financeiroPipeline?.stages.at(-1)?.count ?? 0;
+  const avanStages = FUNNEL_PIPELINES.find((p) => p.source === "avan")?.stages ?? [];
+  const opportunityCount = avanStages[0]?.count ?? 0;
+  const proposalCount = avanStages[1]?.count ?? 0;
+
   const topLeak = leaks[0];
   // O vendedor que mais custa não é o de pior taxa, e sim o que desperdiça mais
   // leads em números absolutos — taxa ruim sobre volume pequeno importa pouco.
@@ -632,9 +641,12 @@ export function identifyBottlenecks(gap: number): Bottleneck[] {
         `oportunidades (${pct(chain.opportunitiesOutsideFunnelShare)}) que nunca passaram pelo funil ` +
         "de leads do Avaligis, então dividir um pelo outro mistura fontes.",
       evidence: [
-        `Avaligis entrega 23 oportunidades; Avan abre 95 — diferença de ${chain.opportunitiesOutsideFunnel}`,
-        `Produto das etapas: 24,6% × 76,7% × 60% × 75,4% × 69,4% = ${pct(chain.leadToContract)}`,
-        `Taxa publicada: 21 ÷ 122 = ${pct(chain.reportedConversion)}`,
+        `Avaligis entrega ${avaligisOpportunities} oportunidades; Avan abre ${avanOpportunities} — ` +
+          `diferença de ${chain.opportunitiesOutsideFunnel}`,
+        `Produto das etapas: ${pct(rateOf("lead-reuniao"))} × ${pct(rateOf("reuniao-oportunidade"))} × ` +
+          `${pct(rateOf("oportunidade-proposta"))} × ${pct(rateOf("proposta-aprovado"))} × ` +
+          `${pct(rateOf("processo-assinado"))} = ${pct(chain.leadToContract)}`,
+        `Taxa publicada: ${HEADLINE_FIGURES.confirmedDeals} ÷ ${allocation.totalLeads} = ${pct(chain.reportedConversion)}`,
       ],
       impact:
         `Planejar com a taxa publicada subdimensiona a meta de topo em ` +
@@ -699,33 +711,35 @@ export function identifyBottlenecks(gap: number): Bottleneck[] {
       ],
       impact:
         `Além disso, ${pct(1 - rateOf("processo-assinado"))} do que entra no Financeiro não vira ` +
-        "contrato — 15 de 49 na base histórica. É a última etapa antes da receita e a menos observada.",
+        `contrato — ${financeiroEntered - financeiroSigned} de ${financeiroEntered} em julho/2026. ` +
+        "É a última etapa antes da receita e a menos observada.",
       confidence: handoff.confidence,
       caveat: handoff.caveat,
     },
     {
       id: "qualificacao-proposta",
-      title: "40% das oportunidades morrem antes da proposta",
+      title: `${pct(1 - rateOf("oportunidade-proposta"), 0)} das oportunidades morrem antes da proposta`,
       scope: "Avan Negócios · qualificação",
       severity: "medio",
-      headline: `95 → 57 (${pct(rateOf("oportunidade-proposta"))})`,
+      headline: `${opportunityCount} → ${proposalCount} (${pct(rateOf("oportunidade-proposta"))})`,
       finding:
-        "Entre abrir a oportunidade e enviar a proposta perde-se 38 negócios. É a maior queda " +
-        "do Avan e acontece antes de qualquer esforço comercial pesado — sinal de qualificação " +
-        "fraca na entrada ou de capacidade insuficiente para produzir proposta.",
+        `Entre abrir a oportunidade e enviar a proposta perde-se ${opportunityCount - proposalCount} ` +
+        "negócios. É a maior queda do Avan e acontece antes de qualquer esforço comercial pesado — " +
+        "sinal de qualificação fraca na entrada ou de capacidade insuficiente para produzir proposta.",
       evidence: [
-        "Nova Oportunidade: 95",
-        `Proposta Enviada: 57 (${pct(rateOf("oportunidade-proposta"))})`,
+        `Nova Oportunidade: ${opportunityCount}`,
+        `Proposta Enviada: ${proposalCount} (${pct(rateOf("oportunidade-proposta"))})`,
         `Proposta Enviada → Aprovado Internamente: ${pct(rateOf("proposta-aprovado"))} — a etapa seguinte converte bem`,
       ],
       impact:
-        "Como a etapa seguinte converte a 75,4%, cada proposta a mais tem alto retorno esperado. " +
-        `Recuperar 10 das 38 oportunidades perdidas rende ~${brl(10 * rateOf("proposta-aprovado") * rateOf("processo-assinado") * tickets.wonTicket)} por ciclo.`,
+        `Como a etapa seguinte converte a ${pct(rateOf("proposta-aprovado"))}, cada proposta a mais tem ` +
+        `alto retorno esperado. Recuperar 10 das ${opportunityCount - proposalCount} oportunidades perdidas ` +
+        `rende ~${brl(10 * rateOf("proposta-aprovado") * rateOf("processo-assinado") * tickets.wonTicket)} por ciclo.`,
       confidence: "media",
     },
     {
       id: "cobertura-cnpj",
-      title: "84% dos clientes fechados não têm CNPJ no CRM",
+      title: `${pct(1 - HEADLINE_FIGURES.cnpjCovered / HEADLINE_FIGURES.cnpjTotal, 0)} dos clientes fechados não têm CNPJ no CRM`,
       scope: "Financeiro · qualidade cadastral",
       severity: "medio",
       headline: `${HEADLINE_FIGURES.cnpjCovered}/${HEADLINE_FIGURES.cnpjTotal} com CNPJ`,
@@ -771,6 +785,11 @@ export function buildContainmentPlan(gap: number): ContainmentStep[] {
   const closure = planGapClosure(gap);
   const integrity = analyzeValueIntegrity();
   const worstInflation = integrity[0];
+  const allocation = analyzeLeadAllocation();
+  const mostOverloaded = [...allocation.overloaded].sort((a, b) => b.leads - a.leads)[0];
+  const financeiroPipeline = FUNNEL_PIPELINES.find((p) => p.source === "financeiro");
+  const financeiroEntered = financeiroPipeline?.stages[0]?.count ?? 0;
+  const financeiroSigned = financeiroPipeline?.stages.at(-1)?.count ?? 0;
 
   return [
     {
@@ -790,13 +809,16 @@ export function buildContainmentPlan(gap: number): ContainmentStep[] {
     {
       bottleneckId: "distribuicao-leads",
       order: 2,
-      action:
-        "Investigar por que Spiner não converteu nenhum dos 5 leads recebidos — ausência de " +
-        "cadência, falta de acesso ou lead fora do perfil.",
+      action: mostOverloaded
+        ? `Investigar a cadência de ${mostOverloaded.seller}, que recebeu ${mostOverloaded.leads} leads ` +
+          `(${(mostOverloaded.leadShare * 100).toFixed(0)}% do total) e converte só ` +
+          `${(mostOverloaded.conversion * 100).toFixed(1)}% em reunião, abaixo da média do time ` +
+          `(${(allocation.teamConversion * 100).toFixed(1)}%).`
+        : "Investigar a cadência dos vendedores com conversão de lead para reunião abaixo da média do time.",
       owner: "Head Comercial",
       horizon: "72h",
       target: "Causa identificada e leads redirecionados ou cadência corrigida",
-      evidence: "Registro de atividade dos 5 leads no Bitrix24",
+      evidence: "Registro de atividade dos leads no Bitrix24",
       effort: "baixo",
     },
     {
@@ -856,11 +878,12 @@ export function buildContainmentPlan(gap: number): ContainmentStep[] {
       bottleneckId: "handoff-financeiro",
       order: 7,
       action:
-        "Atacar os 30,6% que entram no Financeiro e não assinam: mapear os 15 casos históricos " +
-        "e separar recusa do cliente de travamento documental interno.",
+        `Atacar os ${pct(1 - rateOf("processo-assinado"))} que entram no Financeiro e não assinam: mapear os ` +
+        `${financeiroEntered - financeiroSigned} casos de julho/2026 e separar recusa do cliente de ` +
+        "travamento documental interno.",
       owner: "Financeiro",
       horizon: "30 dias",
-      target: "Em Processo → Contrato Assinado de 69,4% para 80%",
+      target: `Em Processo → Contrato Assinado de ${pct(rateOf("processo-assinado"), 0)} para 70%`,
       evidence: "Motivo de perda obrigatório na etapa do Financeiro",
       effort: "médio",
     },
@@ -872,7 +895,7 @@ export function buildContainmentPlan(gap: number): ContainmentStep[] {
         "primeira proposta, separando 'não qualificou' de 'não teve capacidade'.",
       owner: "Head Comercial",
       horizon: "90 dias",
-      target: "Nova Oportunidade → Proposta Enviada de 60% para 72%",
+      target: `Nova Oportunidade → Proposta Enviada de ${pct(rateOf("oportunidade-proposta"), 0)} para 75%`,
       evidence: "Checklist de qualificação no card + SLA de proposta monitorado",
       effort: "alto",
     },

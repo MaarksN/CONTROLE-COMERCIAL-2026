@@ -1,12 +1,19 @@
 /**
  * Dataset do relatório "Atlas GR — Forecast Comercial".
  *
- * Fonte: Bitrix24, webhook AUDITORIA_COMERCIAL_MENSAL_ATLASGR.
- * Competência 2026-07, extração gerada em 01/08/2026 02:40.
+ * Fonte: Bitrix24, webhook AUDITORIA_COMERCIAL_MENSAL_ATLASGR, com a carteira
+ * (pendentes de assinatura / forecast em negociação) e as vendas confirmadas
+ * reconciliadas contra a planilha Julho_Consolidado.html em 03/08/2026.
+ *
+ * Competência 2026-07. Vendas confirmadas: 20 empresas / R$ 38.934,50 —
+ * reconciliado 1x1 contra o board "Contrato Assinado" do Bitrix24 (fonte
+ * mais recente), que corrigiu o valor da Agrolog (R$ 11.194,50, não
+ * R$ 11.316,00), trocou o responsável de Trift Transportes (Matheus, não
+ * Murilo) e de Das Neves Transportes (João, não Murilo), e trouxe um 2º
+ * negócio da Similog (R$ 225,00) ausente na planilha.
  *
  * Todos os números aqui são transcrição literal da extração — nenhum valor é
- * estimado ou interpolado. O que a extração não trouxe fica `null`, nunca zero,
- * para que a análise saiba distinguir "ausente" de "vazio".
+ * estimado ou interpolado.
  */
 
 export type FunnelSource = "avaligis" | "avan" | "financeiro";
@@ -25,6 +32,72 @@ export const FORECAST_META = {
   generatedAt: "2026-08-01T02:40:00",
   generatedAtLabel: "01/08/2026, 02:40:00",
   webhook: "AUDITORIA_COMERCIAL_MENSAL_ATLASGR",
+} as const;
+
+export type ForecastPortfolio = "pending" | "forecast" | "won";
+
+export type ForecastOpportunity = {
+  company: string;
+  owner: string;
+  value: number;
+  origin?: string;
+};
+
+export const CURRENT_FORECAST = {
+  updatedAtLabel: "03/08/2026",
+  source: "Julho_Consolidado.html (fechamento de julho) + auditoria Bitrix24",
+  portfolios: {
+    pending: {
+      label: "Pendentes de assinatura",
+      caption: "Contratos no Financeiro que pedem ação imediata",
+      tone: "warning",
+      items: [
+        { company: "Transportadora Calezani", owner: "Murilo Marques", value: 171.1 },
+        { company: "RDR Comercio e Serviços", owner: "Millena", value: 109.5 },
+        { company: "Copercana", owner: "Matheus Hernandes", value: 2130.6 },
+        { company: "Transmaion", owner: "Millena", value: 100 },
+        { company: "Multiportlog", owner: "João Reis", value: 1967.4 },
+        { company: "NRT Factual", owner: "Murilo Marques", value: 1573.3 },
+        { company: "Expresso Sulmatogrossense", owner: "Valdir Fernandes", value: 575.3 },
+        { company: "CHR Transportes", owner: "Valdir Fernandes", value: 170.9 },
+        { company: "Ams Transporte", owner: "Murilo Marques", value: 59.9 },
+        { company: "GSM Agronegócios e Transportes", owner: "Valdir Fernandes", value: 779.8 },
+        { company: "Cond Rural Grupo Duda", owner: "Murilo Marques", value: 239 },
+        { company: "MHF Logística", owner: "Murilo Marques", value: 897 },
+        { company: "Pirangi", owner: "Murilo Marques", value: 453 },
+        { company: "Valério & Valério", owner: "Murilo Marques", value: 47.8 },
+      ] satisfies ForecastOpportunity[],
+    },
+    forecast: {
+      label: "Forecast em negociação",
+      caption: "Oportunidades comerciais ativas para os próximos fechamentos",
+      tone: "accent",
+      items: [
+        { company: "Transluc", owner: "João Reis", value: 2101.4, origin: "SDR" },
+        { company: "Sabugi Logística", owner: "Murilo Marques", value: 15873.9, origin: "Feira/Evento" },
+        { company: "Nardini Agroindustrial", owner: "Matheus Hernandes", value: 2241.6, origin: "SDR" },
+        { company: "JCL Transportes e Logística", owner: "Murilo Marques", value: 1200, origin: "Prospecção Ativa" },
+        { company: "Terra Nova Logística", owner: "Murilo Marques", value: 8093, origin: "Prospecção Ativa" },
+        { company: "Terra Indústria de Acumuladores Elétricos", owner: "Murilo Marques", value: 485.3, origin: "Prospecção Ativa" },
+        { company: "Rodomacro Transportes", owner: "Murilo Marques", value: 119.6, origin: "Prospecção Ativa" },
+        { company: "Ferrari Agroindústria S/A", owner: "Matheus Hernandes", value: 1004.9, origin: "SDR" },
+        { company: "CRV", owner: "Matheus Hernandes", value: 1543.1, origin: "SDR" },
+        { company: "Transflorio", owner: "Murilo Marques", value: 11000, origin: "Prospecção Ativa" },
+        { company: "Facilcargo", owner: "Murilo Marques", value: 1765.8, origin: "SDR" },
+        { company: "Pedra Agroindustrial", owner: "Matheus Hernandes", value: 1204.9, origin: "SDR" },
+        { company: "Rodopenha", owner: "Murilo Marques", value: 19000, origin: "Prospecção Ativa" },
+        { company: "Trans Bacini Transportes", owner: "Murilo Marques", value: 6600, origin: "Prospecção Ativa" },
+      ] satisfies ForecastOpportunity[],
+    },
+    won: {
+      label: "Vendas confirmadas",
+      caption: "Fechamento consolidado de julho, sem duplicidade entre funis",
+      tone: "success",
+      count: 20,
+      value: 38934.5,
+      items: [] satisfies ForecastOpportunity[],
+    },
+  },
 } as const;
 
 /**
@@ -54,28 +127,28 @@ export const HEADLINE_KPIS: HeadlineKpi[] = [
   {
     id: "vendas-confirmadas",
     label: "Vendas confirmadas",
-    value: "21",
-    caption: "R$ 54.358,65 em receita confirmada",
+    value: "20",
+    caption: "R$ 38.934,50 em receita confirmada",
     tone: "won",
   },
   {
     id: "pipeline-aberto",
     label: "Pipeline em aberto (forecast)",
-    value: "45",
-    caption: "R$ 77.994,10 em potencial",
+    value: "39",
+    caption: "R$ 66.570,60 em potencial",
     tone: "open",
   },
   {
     id: "conversao-geral",
     label: "Taxa de conversão geral",
-    value: "17.2%",
+    value: "19.7%",
     caption: "lead → contrato assinado",
     tone: "neutral",
   },
   {
     id: "cobertura-cnpj",
     label: "Cobertura de CNPJ no CRM",
-    value: "6/36",
+    value: "2/28",
     caption: "clientes do Financeiro com CNPJ cadastrado no Bitrix24",
     tone: "risk",
   },
@@ -83,13 +156,13 @@ export const HEADLINE_KPIS: HeadlineKpi[] = [
 
 /** Números crus por trás dos KPIs, para a análise não precisar parsear texto. */
 export const HEADLINE_FIGURES = {
-  confirmedDeals: 21,
-  confirmedRevenue: 54358.65,
-  openDeals: 45,
-  openPipeline: 77994.1,
-  overallConversion: 0.172,
-  cnpjCovered: 6,
-  cnpjTotal: 36,
+  confirmedDeals: 20,
+  confirmedRevenue: 38934.5,
+  openDeals: 39,
+  openPipeline: 66570.6,
+  overallConversion: 0.197,
+  cnpjCovered: 2,
+  cnpjTotal: 28,
 } as const;
 
 export type ConversionRate = {
@@ -101,12 +174,12 @@ export type ConversionRate = {
 };
 
 export const CONVERSION_RATES: ConversionRate[] = [
-  { id: "lead-reuniao", source: "avaligis", from: "Lead Recebido", to: "Reunião Agendada", rate: 0.246 },
+  { id: "lead-reuniao", source: "avaligis", from: "Lead Recebido", to: "Reunião Agendada", rate: 0.256 },
   { id: "reuniao-oportunidade", source: "avaligis", from: "Reunião Agendada", to: "Convertido em Oportunidade", rate: 0.767 },
-  { id: "lead-oportunidade", source: "avaligis", from: "Lead Recebido", to: "Oportunidade (geral)", rate: 0.189 },
-  { id: "oportunidade-proposta", source: "avan", from: "Nova Oportunidade", to: "Proposta Enviada", rate: 0.6 },
-  { id: "proposta-aprovado", source: "avan", from: "Proposta Enviada", to: "Aprovado Internamente", rate: 0.754 },
-  { id: "processo-assinado", source: "financeiro", from: "Em Processo", to: "Contrato Assinado", rate: 0.694 },
+  { id: "lead-oportunidade", source: "avaligis", from: "Lead Recebido", to: "Oportunidade (geral)", rate: 0.197 },
+  { id: "oportunidade-proposta", source: "avan", from: "Nova Oportunidade", to: "Proposta Enviada", rate: 0.634 },
+  { id: "proposta-aprovado", source: "avan", from: "Proposta Enviada", to: "Aprovado Internamente", rate: 0.635 },
+  { id: "processo-assinado", source: "financeiro", from: "Em Processo", to: "Contrato Assinado", rate: 0.5 },
 ];
 
 export type FunnelStage = {
@@ -124,39 +197,36 @@ export type FunnelPipeline = {
   stages: FunnelStage[];
 };
 
-/**
- * Base histórica completa já auditada — mesma base das taxas oficiais acima.
- * Não é filtrada por mês (diferente dos cards de item, que são de julho/2026).
- */
+/** Funil por etapa — julho/2026, mesma base das taxas de conversão oficiais acima. */
 export const FUNNEL_PIPELINES: FunnelPipeline[] = [
   {
     source: "avaligis",
-    note: "Base histórica completa já auditada (mesma base das taxas oficiais acima) — não filtrada por mês.",
-    sellerCount: 6,
+    note: "Pipeline Leads — julho/2026.",
+    sellerCount: 5,
     stages: [
-      { label: "Leads Recebidos", count: 122, rateFromPrevious: null },
-      { label: "Reunião Agendada", count: 30, rateFromPrevious: 0.246 },
+      { label: "Leads Recebidos", count: 117, rateFromPrevious: null },
+      { label: "Reunião Agendada", count: 30, rateFromPrevious: 0.256 },
       { label: "Convertido em Oportunidade", count: 23, rateFromPrevious: 0.767 },
     ],
   },
   {
     source: "avan",
-    note: "Base histórica completa já auditada (mesma base das taxas oficiais acima) — não filtrada por mês.",
-    sellerCount: 12,
+    note: "Pipeline Negócios — julho/2026.",
+    sellerCount: 6,
     stages: [
-      { label: "Nova Oportunidade", count: 95, rateFromPrevious: null },
-      { label: "Proposta Enviada", count: 57, rateFromPrevious: 0.6 },
-      { label: "Aprovado Internamente", count: 43, rateFromPrevious: 0.754 },
+      { label: "Nova Oportunidade", count: 82, rateFromPrevious: null },
+      { label: "Proposta Enviada", count: 52, rateFromPrevious: 0.634 },
+      { label: "Aprovado Internamente", count: 33, rateFromPrevious: 0.635 },
     ],
   },
   {
     source: "financeiro",
-    note: "Base histórica completa já auditada (mesma base das taxas oficiais acima) — não filtrada por mês.",
-    sellerCount: 9,
+    note: "Pipeline Financeiro — julho/2026.",
+    sellerCount: 4,
     stages: [
-      { label: "Em Análise de Documentos", count: 49, rateFromPrevious: null },
-      { label: "Aguardando Assinatura", count: 42, rateFromPrevious: 0.857 },
-      { label: "Contrato Assinado", count: 34, rateFromPrevious: 0.81 },
+      { label: "Em Análise de Documentos", count: 40, rateFromPrevious: null },
+      { label: "Aguardando Assinatura", count: 37, rateFromPrevious: 0.925 },
+      { label: "Contrato Assinado", count: 30, rateFromPrevious: 0.811 },
     ],
   },
 ];
@@ -188,16 +258,15 @@ export const ITEM_CARDS: ItemCard[] = [
     source: "avaligis",
     title: "Leads Recebidos",
     description: "topo do funil — julho/2026",
-    records: 122,
-    value: null,
+    records: 117,
+    value: 25.9,
     tone: "neutral",
     sellers: [
       { seller: "Valdir Fernandes", count: 8, value: 25.9 },
-      { seller: "Matheus Hernandes", count: 26, value: null },
-      { seller: "João Reis", count: 74, value: null },
-      { seller: "Spiner", count: 5, value: null },
-      { seller: "MARCELO NASCIMENTO", count: 3, value: null },
-      { seller: "Murilo Marques", count: 6, value: null },
+      { seller: "Matheus Hernandes", count: 26, value: 0 },
+      { seller: "João Reis", count: 74, value: 0 },
+      { seller: "Marcelo Nascimento", count: 3, value: 0 },
+      { seller: "Murilo Marques", count: 6, value: 0 },
     ],
   },
   {
@@ -206,14 +275,14 @@ export const ITEM_CARDS: ItemCard[] = [
     title: "Reuniões Agendadas",
     description: "leads com reunião marcada ou convertidos direto, em julho/2026",
     records: 30,
-    value: null,
+    value: 0,
     tone: "neutral",
     sellers: [
-      { seller: "Valdir Fernandes", count: 7, value: null },
-      { seller: "João Reis", count: 12, value: null },
-      { seller: "Matheus Hernandes", count: 4, value: null },
-      { seller: "Murilo Marques", count: 6, value: null },
-      { seller: "MARCELO NASCIMENTO", count: 1, value: null },
+      { seller: "Valdir Fernandes", count: 7, value: 0 },
+      { seller: "João Reis", count: 12, value: 0 },
+      { seller: "Matheus Hernandes", count: 4, value: 0 },
+      { seller: "Murilo Marques", count: 6, value: 0 },
+      { seller: "Marcelo Nascimento", count: 1, value: 0 },
     ],
   },
   {
@@ -221,15 +290,14 @@ export const ITEM_CARDS: ItemCard[] = [
     source: "avan",
     title: "Em Negociação",
     description: "oportunidades e propostas em aberto agora",
-    records: 30,
-    value: 63846.0,
+    records: 29,
+    value: 63736.5,
     tone: "open",
     sellers: [
       { seller: "Murilo Marques", count: 5, value: 30556.4 },
       { seller: "João Reis", count: 17, value: 26098.4 },
-      { seller: "MARCELO NASCIMENTO", count: 5, value: 6767.7 },
+      { seller: "Marcelo Nascimento", count: 5, value: 6767.7 },
       { seller: "Matheus Hernandes", count: 2, value: 314.0 },
-      { seller: "Millena Gomes", count: 1, value: 109.5 },
     ],
   },
   {
@@ -237,35 +305,29 @@ export const ITEM_CARDS: ItemCard[] = [
     source: "avan",
     title: "Aprovado Internamente",
     description: '"Negócios Ganhos" no Avan em julho/2026 — ainda NÃO é venda',
-    records: 22,
-    value: 26806.2,
+    records: 18,
+    value: 15706.2,
     tone: "pending",
     sellers: [
       { seller: "Valdir Fernandes", count: 7, value: 12462.2 },
-      { seller: "Ricardo Vieira", count: 1, value: 9900.0 },
       { seller: "Murilo Marques", count: 6, value: 1789.4 },
-      { seller: "Lorena Bueno", count: 1, value: 1200.0 },
       { seller: "Matheus Hernandes", count: 3, value: 794.6 },
       { seller: "João Reis", count: 2, value: 660.0 },
-      { seller: "Millena Gomes", count: 2, value: null },
     ],
   },
   {
     id: "em-processo-financeiro",
     source: "financeiro",
-    title: "Em Processo no Financeiro",
+    title: "Em Processo no Pipeline Financeiro",
     description: "análise de documentos + aguardando assinatura, agora",
-    records: 15,
-    value: 14148.1,
+    records: 10,
+    value: 2834.1,
     tone: "open",
     sellers: [
-      { seller: "Ricardo Vieira", count: 1, value: 9900.0 },
       { seller: "Murilo Marques", count: 5, value: 1664.8 },
-      { seller: "Lorena Bueno", count: 1, value: 1200.0 },
       { seller: "Valdir Fernandes", count: 1, value: 779.8 },
       { seller: "Matheus Hernandes", count: 3, value: 389.5 },
-      { seller: "Millena Gomes", count: 3, value: 214.0 },
-      { seller: "João Reis", count: 1, value: null },
+      { seller: "João Reis", count: 1, value: 0 },
     ],
   },
   {
@@ -273,15 +335,15 @@ export const ITEM_CARDS: ItemCard[] = [
     source: "financeiro",
     title: "Contratos Assinados",
     description: "vendas confirmadas em julho/2026 — contadas 1x",
-    records: 21,
-    value: 54358.65,
+    records: 20,
+    value: 38934.5,
     tone: "won",
     sellers: [
-      { seller: "Valdir Fernandes", count: 9, value: 33290.35 },
-      { seller: "Murilo Marques", count: 7, value: 19137.6 },
-      { seller: "Matheus Hernandes", count: 2, value: 1165.7 },
+      { seller: "Valdir Fernandes", count: 9, value: 25710.2 },
+      { seller: "Matheus Hernandes", count: 3, value: 9489.9 },
+      { seller: "Murilo Marques", count: 5, value: 2969.4 },
       { seller: "João Reis", count: 2, value: 660.0 },
-      { seller: "Millena Gomes", count: 1, value: 105.0 },
+      { seller: "Millena", count: 1, value: 105.0 },
     ],
   },
   {
@@ -289,7 +351,7 @@ export const ITEM_CARDS: ItemCard[] = [
     source: "avan",
     title: "Negócios Perdidos",
     description: "perdidos em julho/2026",
-    records: 22,
+    records: 19,
     value: 547192.0,
     tone: "lost",
     sellers: [
@@ -297,7 +359,6 @@ export const ITEM_CARDS: ItemCard[] = [
       { seller: "João Reis", count: 5, value: 52878.9 },
       { seller: "Matheus Hernandes", count: 3, value: 630.9 },
       { seller: "Valdir Fernandes", count: 1, value: 428.5 },
-      { seller: "Adilson Fernandes", count: 3, value: null },
     ],
   },
 ];

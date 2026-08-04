@@ -9,19 +9,24 @@
  * duplicar os números do relatório, para que as duas visões não divirjam.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import type { MonthlyMetric } from "./deriveMetrics";
 import {
   COUNTING_RULE,
   CONVERSION_RATES,
+  CURRENT_FORECAST,
   FORECAST_FOOTNOTE,
   FORECAST_META,
   FUNNEL_PIPELINES,
   FUNNEL_SOURCE_LABELS,
   HEADLINE_KPIS,
   ITEM_CARDS,
+  findItemCard,
+  type ForecastPortfolio,
+  type SellerBreakdown,
 } from "./data/forecast-bitrix";
 import { analyzeForecast, type Bottleneck, type ContainmentStep } from "./deriveForecastFunnel";
+import { findForecastRecords, type ForecastRecord } from "./data/forecast-records";
 
 const currency = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -41,6 +46,112 @@ const KPI_TONE_CLASS: Record<string, string> = {
   neutral: "fc-kpi",
   risk: "fc-kpi fc-kpi-risk",
 };
+
+/* ------------------------- Gaveta de detalhe ------------------------- */
+
+type DrawerRequest =
+  | { kind: "card"; cardId: string }
+  | { kind: "combo"; cardIds: [string, string]; title: string; description: string }
+  | { kind: "conversion" }
+  | { kind: "cnpj" };
+
+type DrawerContent = {
+  title: string;
+  description: string;
+  value: number | null;
+  sellers: SellerBreakdown[];
+  records: ForecastRecord[];
+  mode: "records" | "conversion" | "cnpj";
+};
+
+const KPI_DRAWER_REQUEST: Record<string, DrawerRequest> = {
+  "vendas-confirmadas": { kind: "card", cardId: "contratos-assinados" },
+  "pipeline-aberto": {
+    kind: "combo",
+    cardIds: ["em-negociacao", "em-processo-financeiro"],
+    title: "Pipeline em Aberto (Forecast)",
+    description:
+      'Soma de "Em Negociação" (Pipeline Negócios) + "Em Processo no Pipeline Financeiro" — ' +
+      "oportunidades ainda não fechadas, visão do momento atual.",
+  },
+  "conversao-geral": { kind: "conversion" },
+  "cobertura-cnpj": { kind: "cnpj" },
+};
+
+/** Soma as quebras por vendedor de dois cards, para as gavetas combinadas (KPIs). */
+function mergeSellers(a: SellerBreakdown[], b: SellerBreakdown[]): SellerBreakdown[] {
+  const map = new Map<string, SellerBreakdown>();
+  for (const row of a) map.set(row.seller, { ...row, value: row.value ?? 0 });
+  for (const row of b) {
+    const existing = map.get(row.seller);
+    if (existing) {
+      existing.count += row.count;
+      existing.value = (existing.value ?? 0) + (row.value ?? 0);
+    } else {
+      map.set(row.seller, { ...row, value: row.value ?? 0 });
+    }
+  }
+  return [...map.values()].sort((x, y) => y.count - x.count);
+}
+
+function resolveDrawerContent(request: DrawerRequest): DrawerContent | null {
+  if (request.kind === "conversion") {
+    return {
+      title: "Taxa de conversão geral",
+      description:
+        "Conversão etapa a etapa do funil em julho/2026: do lead recebido até o contrato assinado.",
+      value: null,
+      sellers: [],
+      records: [],
+      mode: "conversion",
+    };
+  }
+
+  if (request.kind === "cnpj") {
+    const processo = findItemCard("em-processo-financeiro");
+    const assinados = findItemCard("contratos-assinados");
+    const records = [
+      ...findForecastRecords("em-processo-financeiro"),
+      ...findForecastRecords("contratos-assinados"),
+    ];
+    return {
+      title: "Cobertura de CNPJ no CRM",
+      description:
+        "Clientes do Pipeline Financeiro (em processo + contratos assinados) em julho/2026, com o " +
+        "status de cadastro de CNPJ no Bitrix24.",
+      value: null,
+      sellers: mergeSellers(processo?.sellers ?? [], assinados?.sellers ?? []),
+      records,
+      mode: "cnpj",
+    };
+  }
+
+  if (request.kind === "card") {
+    const card = findItemCard(request.cardId);
+    if (!card) return null;
+    return {
+      title: `${card.title} (${card.records})`,
+      description: card.description,
+      value: card.value,
+      sellers: card.sellers,
+      records: findForecastRecords(card.id),
+      mode: "records",
+    };
+  }
+
+  const [idA, idB] = request.cardIds;
+  const cardA = findItemCard(idA);
+  const cardB = findItemCard(idB);
+  if (!cardA || !cardB) return null;
+  return {
+    title: request.title,
+    description: request.description,
+    value: (cardA.value ?? 0) + (cardB.value ?? 0),
+    sellers: mergeSellers(cardA.sellers, cardB.sellers),
+    records: [...findForecastRecords(idA), ...findForecastRecords(idB)],
+    mode: "records",
+  };
+}
 
 type Props = {
   monthlyMetrics: MonthlyMetric[];
@@ -68,6 +179,24 @@ export function ForecastSection({ monthlyMetrics, ytdGap }: Props) {
   const [openBottleneck, setOpenBottleneck] = useState<string | null>(
     analysis.bottlenecks[0]?.id ?? null,
   );
+  const [activePortfolio, setActivePortfolio] = useState<ForecastPortfolio>("forecast");
+  const [drawer, setDrawer] = useState<DrawerRequest | null>(null);
+
+  const portfolios = useMemo(() => {
+    return (Object.entries(CURRENT_FORECAST.portfolios) as Array<
+      [ForecastPortfolio, (typeof CURRENT_FORECAST.portfolios)[ForecastPortfolio]]
+    >).map(([id, portfolio]) => ({
+      id,
+      ...portfolio,
+      count: "count" in portfolio ? portfolio.count : portfolio.items.length,
+      value:
+        "value" in portfolio
+          ? portfolio.value
+          : portfolio.items.reduce((sum, item) => sum + item.value, 0),
+    }));
+  }, []);
+  const selectedPortfolio = portfolios.find((portfolio) => portfolio.id === activePortfolio)!;
+  const totalPotential = portfolios.reduce((sum, portfolio) => sum + portfolio.value, 0);
 
   const stepsByBottleneck = useMemo(() => {
     const grouped = new Map<string, ContainmentStep[]>();
@@ -84,9 +213,7 @@ export function ForecastSection({ monthlyMetrics, ytdGap }: Props) {
       {/* ----------------------------- Cabeçalho ---------------------------- */}
       <header className="fc-band">
         <div className="fc-band-top">
-          <span className="fc-band-logo">
-            <i aria-hidden="true">◭</i> Atlas
-          </span>
+          <span className="fc-band-logo"><img src="/atlas-logo.png" alt="Atlas GR" /></span>
           <div className="fc-band-title">
             <h2>{FORECAST_META.title}</h2>
             <p>{FORECAST_META.flow}</p>
@@ -97,14 +224,98 @@ export function ForecastSection({ monthlyMetrics, ytdGap }: Props) {
         </span>
       </header>
 
+      <section className="fc-live" aria-labelledby="fc-live-title">
+        <div className="fc-live-heading">
+          <div>
+            <span className="fc-live-eyebrow">Posição comercial atualizada</span>
+            <h3 id="fc-live-title">Do contrato em assinatura à próxima venda</h3>
+            <p>{CURRENT_FORECAST.source} · atualizado em {CURRENT_FORECAST.updatedAtLabel}</p>
+          </div>
+          <div className="fc-live-total">
+            <span>Volume comercial mapeado</span>
+            <strong>{currency.format(totalPotential)}</strong>
+            <small>{portfolios.reduce((sum, item) => sum + item.count, 0)} negócios em visão</small>
+          </div>
+        </div>
+
+        <div className="fc-portfolio-tabs" role="tablist" aria-label="Carteiras do forecast">
+          {portfolios.map((portfolio) => (
+            <button
+              key={portfolio.id}
+              type="button"
+              role="tab"
+              aria-selected={activePortfolio === portfolio.id}
+              className={`fc-portfolio-tab fc-portfolio-${portfolio.tone}`}
+              onClick={() => setActivePortfolio(portfolio.id)}
+            >
+              <span>{portfolio.label}</span>
+              <strong>{portfolio.count}</strong>
+              <small>{currency.format(portfolio.value)}</small>
+            </button>
+          ))}
+        </div>
+
+        <div className="fc-portfolio-detail" role="tabpanel">
+          <div className="fc-portfolio-detail-head">
+            <div>
+              <span className={`fc-status-dot fc-dot-${selectedPortfolio.tone}`} />
+              <h4>{selectedPortfolio.label}</h4>
+            </div>
+            <p>{selectedPortfolio.caption}</p>
+          </div>
+          {selectedPortfolio.items.length > 0 ? (
+            <div className="fc-opportunity-grid">
+              {selectedPortfolio.items.map((item) => (
+                <article key={`${activePortfolio}-${item.company}`} className="fc-opportunity">
+                  <div>
+                    <strong>{item.company}</strong>
+                    <span>{item.owner}</span>
+                  </div>
+                  <div>
+                    {"origin" in item && item.origin && <small>{item.origin}</small>}
+                    <b>{currency.format(item.value)}</b>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="fc-won-summary">
+              <strong>{selectedPortfolio.count} contratos consolidados</strong>
+              <span>O detalhe nominal permanece na base auditada para preservar a rastreabilidade.</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <div className="fc-heading fc-heading-history">
+        <h3>Auditoria histórica do funil</h3>
+      </div>
+
       <div className="fc-kpi-grid">
-        {HEADLINE_KPIS.map((kpi) => (
-          <article key={kpi.id} className={KPI_TONE_CLASS[kpi.tone] ?? "fc-kpi"}>
-            <span>{kpi.label}</span>
-            <strong>{kpi.value}</strong>
-            <small>{kpi.caption}</small>
-          </article>
-        ))}
+        {HEADLINE_KPIS.map((kpi) => {
+          const request = KPI_DRAWER_REQUEST[kpi.id];
+          return (
+            <article
+              key={kpi.id}
+              className={`${KPI_TONE_CLASS[kpi.tone] ?? "fc-kpi"}${request ? " fc-clickable" : ""}`}
+              {...(request
+                ? {
+                    role: "button",
+                    tabIndex: 0,
+                    onClick: () => setDrawer(request),
+                    onKeyDown: (event: KeyboardEvent) => {
+                      if (event.key === "Enter" || event.key === " ") setDrawer(request);
+                    },
+                  }
+                : {})}
+            >
+              <span>{kpi.label}</span>
+              <strong>{kpi.value}</strong>
+              <small>{kpi.caption}</small>
+              {request && <span className="fc-item-cta">Ver detalhe →</span>}
+            </article>
+          );
+        })}
       </div>
 
       <p className="fc-callout">
@@ -295,7 +506,18 @@ export function ForecastSection({ monthlyMetrics, ytdGap }: Props) {
 
       <div className="fc-item-grid">
         {ITEM_CARDS.map((card) => (
-          <article key={card.id} className={`fc-item fc-item-${card.tone}`}>
+          <article
+            key={card.id}
+            className={`fc-item fc-item-${card.tone} fc-clickable`}
+            role="button"
+            tabIndex={0}
+            onClick={() => setDrawer({ kind: "card", cardId: card.id })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                setDrawer({ kind: "card", cardId: card.id });
+              }
+            }}
+          >
             <span className="fc-item-source">{FUNNEL_SOURCE_LABELS[card.source]}</span>
             <h4>{card.title}</h4>
             <p>{card.description}</p>
@@ -315,6 +537,7 @@ export function ForecastSection({ monthlyMetrics, ytdGap }: Props) {
                 </div>
               ))}
             </div>
+            <span className="fc-item-cta">Ver todos os itens →</span>
           </article>
         ))}
       </div>
@@ -507,6 +730,8 @@ export function ForecastSection({ monthlyMetrics, ytdGap }: Props) {
       </p>
 
       <p className="fc-footnote">{FORECAST_FOOTNOTE}</p>
+
+      <ForecastDrawer request={drawer} onClose={() => setDrawer(null)} />
     </section>
   );
 }
@@ -573,6 +798,241 @@ function BottleneckCard({
 
           {bottleneck.caveat && <p className="fc-caveat">Limite do dado: {bottleneck.caveat}</p>}
         </>
+      )}
+    </article>
+  );
+}
+
+/* -------------------------------------------------------------------- */
+
+function ForecastDrawer({
+  request,
+  onClose,
+}: {
+  request: DrawerRequest | null;
+  onClose: () => void;
+}) {
+  const content = request ? resolveDrawerContent(request) : null;
+
+  return (
+    <div
+      className={`fc-overlay${content ? " fc-overlay-open" : ""}`}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      {content && (
+        <div className="fc-drawer">
+          <div className="fc-drawer-head">
+            <div>
+              <h3>{content.title}</h3>
+              <p>{content.description}</p>
+            </div>
+            <button type="button" className="fc-drawer-close" onClick={onClose} aria-label="Fechar">
+              ✕
+            </button>
+          </div>
+          <div className="fc-drawer-body">
+            {content.mode === "conversion" ? (
+              <div className="fc-rate-grid">
+                {CONVERSION_RATES.map((rate) => (
+                  <article key={rate.id} className="fc-rate">
+                    <span className="fc-rate-source">{FUNNEL_SOURCE_LABELS[rate.source]}</span>
+                    <span className="fc-rate-flow">
+                      {rate.from} → {rate.to}
+                    </span>
+                    <strong>{percent.format(rate.rate)}</strong>
+                    <i className="fc-bar">
+                      <b style={{ width: `${Math.min(rate.rate * 100, 100)}%` }} />
+                    </i>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <>
+                {content.sellers.length > 0 && (
+                  <div className="fc-drawer-summary">
+                    <span className="fc-drawer-summary-label">Total geral</span>
+                    <div className="fc-drawer-summary-main">
+                      <span className="fc-drawer-summary-count">{content.records.length}</span>
+                      <span className="fc-drawer-summary-count-label">
+                        registro{content.records.length === 1 ? "" : "s"} no total
+                      </span>
+                      {content.value !== null && (
+                        <span className="fc-drawer-summary-value">
+                          {currency.format(content.value)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="fc-drawer-summary-breakdown">
+                      {content.sellers.map((seller) => (
+                        <span key={seller.seller}>
+                          <b>{seller.seller}:</b> {seller.count} registro
+                          {seller.count === 1 ? "" : "s"}
+                          {seller.value ? ` · ${currency.format(seller.value)}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {content.mode === "cnpj" ? (
+                  <div className="fc-table-wrap">
+                    <table className="fc-table">
+                      <thead>
+                        <tr>
+                          <th>Empresa</th>
+                          <th>Responsável</th>
+                          <th>Valor</th>
+                          <th>CNPJ no CRM</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {content.records.map((record) => (
+                          <tr key={record.id}>
+                            <th>{record.company ?? record.title}</th>
+                            <td>{record.owner}</td>
+                            <td>{record.valueFmt}</td>
+                            <td>
+                              {record.cnpjStatus === "cadastrado no CRM" ? (
+                                <span className="fc-cnpj-pill fc-cnpj-ok">
+                                  Cadastrado ({record.cnpj})
+                                </span>
+                              ) : record.cnpjStatus?.includes("Bitrix24") ? (
+                                <span className="fc-cnpj-pill fc-cnpj-missing">
+                                  Não cadastrado
+                                </span>
+                              ) : (
+                                <span className="fc-rec-k">não informado nesta fonte</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="fc-rec-grid">
+                    {content.records.map((record) => (
+                      <RecordCard key={record.id} record={record} />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecordCard({ record }: { record: ForecastRecord }) {
+  const hasEvidence = record.cnpjStatus !== undefined || record.contactName !== undefined;
+  const stageLine = [record.stage, record.signedDate ? `assinado em ${record.signedDate}` : null]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <article className="fc-rec-card">
+      <div className="fc-rec-title">{record.title}</div>
+      {stageLine && <div className="fc-rec-stage">{stageLine}</div>}
+
+      {hasEvidence ? (
+        <>
+          {(record.cnpj || record.cnpjStatus?.includes("Bitrix24")) && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">CNPJ</span>
+              <span className="fc-rec-v">
+                {record.cnpj ? (
+                  <span className="fc-cnpj-pill fc-cnpj-ok">{record.cnpj}</span>
+                ) : (
+                  <span className="fc-cnpj-pill fc-cnpj-missing">não cadastrado no CRM</span>
+                )}
+              </span>
+            </div>
+          )}
+          {record.contactName && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">Contato</span>
+              <span className="fc-rec-v">{record.contactName}</span>
+            </div>
+          )}
+          {record.contactPhone && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">Telefone</span>
+              <span className="fc-rec-v">{record.contactPhone}</span>
+            </div>
+          )}
+          {record.contactEmail && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">E-mail</span>
+              <span className="fc-rec-v">{record.contactEmail}</span>
+            </div>
+          )}
+          <div className="fc-rec-row">
+            <span className="fc-rec-k">Valor</span>
+            <span className="fc-rec-v">{record.valueFmt}</span>
+          </div>
+          {record.entryDate && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">Entrada no Financeiro</span>
+              <span className="fc-rec-v">{record.entryDate}</span>
+            </div>
+          )}
+          {record.origin && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">Origem</span>
+              <span className="fc-rec-v">{record.origin}</span>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {record.company && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">Empresa</span>
+              <span className="fc-rec-v">{record.company}</span>
+            </div>
+          )}
+          {record.origin && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">Origem</span>
+              <span className="fc-rec-v">{record.origin}</span>
+            </div>
+          )}
+          <div className="fc-rec-row">
+            <span className="fc-rec-k">Valor</span>
+            <span className="fc-rec-v">{record.valueFmt}</span>
+          </div>
+          {record.date && (
+            <div className="fc-rec-row">
+              <span className="fc-rec-k">Data</span>
+              <span className="fc-rec-v">{record.date}</span>
+            </div>
+          )}
+        </>
+      )}
+
+      {record.diagnostics.length > 0 && (
+        <>
+          <div className="fc-diag-title">Diagnóstico</div>
+          <ul className="fc-diag-list">
+            {record.diagnostics.map((entry, index) => (
+              <li key={index} className={`fc-diag-${entry.type}`}>
+                {entry.text}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {record.link ? (
+        <a className="fc-rec-link" href={record.link} target="_blank" rel="noopener noreferrer">
+          Abrir registro no Bitrix24 ↗
+        </a>
+      ) : (
+        <span className="fc-rec-link fc-rec-link-disabled">Sem link direto (origem: planilha)</span>
       )}
     </article>
   );

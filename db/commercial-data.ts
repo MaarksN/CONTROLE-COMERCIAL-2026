@@ -36,11 +36,11 @@ import {
   googleOauthTokens as googleTokensTable,
 } from "./schema";
 
-const SEED_VERSION = "atlas-commercial-2026-v1";
+const SEED_VERSION = "atlas-commercial-2026-v4";
 const STAGE_BACKFILL_KEY = "stage_backfill_v1";
 const SELLER_ROSTER_KEY = "team_roster";
 const ACTION_ITEMS_SEED_KEY = "action_items_seed_v1";
-const EXTRA_MONTHS_BACKFILL_KEY = "extra_month_targets_v1";
+const EXTRA_MONTHS_BACKFILL_KEY = "extra_month_targets_v2";
 const ADMIN_SEED_KEY = "admin_role_seed_v1";
 // D1 caps bound parameters per statement at 100; commercialDeals binds 14
 // columns/row, so this must stay small enough that batch_size * widest_row
@@ -53,12 +53,14 @@ const EDITABLE_ROLES = new Set(
 
 const DEFAULT_ADMIN_EMAIL = "marcelinmark@gmail.com";
 
+// Metas de ago-dez foram revisadas para cima ("Meta Ajustada" na aba "2026" da
+// planilha, atualizada em 03/08/2026) — jan-jul não mudam porque já realizados.
 const EXTRA_MONTH_TARGETS: Array<{ monthNumber: number; month: string; target: number }> = [
-  { monthNumber: 8, month: "Agosto", target: 27300 },
-  { monthNumber: 9, month: "Setembro", target: 32925 },
-  { monthNumber: 10, month: "Outubro", target: 32975 },
-  { monthNumber: 11, month: "Novembro", target: 27300 },
-  { monthNumber: 12, month: "Dezembro", target: 13650 },
+  { monthNumber: 8, month: "Agosto", target: 34845.7 },
+  { monthNumber: 9, month: "Setembro", target: 40470.7 },
+  { monthNumber: 10, month: "Outubro", target: 40520.7 },
+  { monthNumber: 11, month: "Novembro", target: 34845.7 },
+  { monthNumber: 12, month: "Dezembro", target: 21195.7 },
 ];
 
 function fullYearTargets(): Target[] {
