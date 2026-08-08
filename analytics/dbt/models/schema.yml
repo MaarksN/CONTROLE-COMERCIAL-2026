@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: commercial_monthly
+    description: Métricas comerciais mensais normalizadas a partir da fonte consolidada.
+    columns:
+      - name: month_number
+        tests: [not_null, unique]
+      - name: month
+        tests: [not_null]
+      - name: target
+        tests: [not_null]
+      - name: sold
+        tests: [not_null]
+      - name: adjusted
+        tests: [not_null]

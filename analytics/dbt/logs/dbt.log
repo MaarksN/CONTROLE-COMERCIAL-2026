@@ -1,0 +1,451 @@
+[0m10:51:54.669593 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F44F0B60>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F435FB00>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F4066D20>]}
+
+
+============================== 10:51:54.686597 | 418b1848-6025-47fb-921f-c55a4bcb7bc4 ==============================
+[0m10:51:54.686597 [info ] [MainThread]: Running with dbt=1.12.0
+[0m10:51:54.687597 [debug] [MainThread]: running dbt with arguments {'version_check': 'True', 'no_print': 'None', 'static_parser': 'True', 'target_path': 'None', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'maximum_seed_size_mib': '1', 'printer_width': '80', 'write_json': 'True', 'empty': 'False', 'log_cache_events': 'False', 'introspect': 'True', 'cache_selected_only': 'False', 'log_format': 'default', 'debug': 'False', 'fail_fast': 'False', 'profiles_dir': 'analytics/dbt', 'send_anonymous_usage_stats': 'True', 'quiet': 'False', 'warn_error': 'None', 'partial_parse': 'True', 'use_colors': 'True', 'hints_enabled': 'True', 'indirect_selection': 'eager', 'use_experimental_parser': 'False', 'invocation_command': 'dbt ', 'log_path': 'analytics\\dbt\\logs'}
+[0m10:51:55.289461 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'project_id', 'label': '418b1848-6025-47fb-921f-c55a4bcb7bc4', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F3EE30B0>]}
+[0m10:51:55.394489 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'adapter_info', 'label': '418b1848-6025-47fb-921f-c55a4bcb7bc4', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F4554560>]}
+[0m10:51:55.416495 [info ] [MainThread]: Registered adapter: duckdb=1.11.0
+[0m10:51:55.789578 [debug] [MainThread]: checksum: 46ca7eebe0f9355fcf4c0b8ee7003df00e261fd6f1e5e34e461763bd19b064fc, vars: {}, profile: atlasgr_commercial, target: dev, version: 1.12.0
+[0m10:51:55.790578 [info ] [MainThread]: Unable to do partial parsing because saved manifest not found. Starting full parse.
+[0m10:51:55.791578 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'partial_parser', 'label': '418b1848-6025-47fb-921f-c55a4bcb7bc4', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F655C290>]}
+[0m10:52:00.250716 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'load_project', 'label': '418b1848-6025-47fb-921f-c55a4bcb7bc4', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F6D4A480>]}
+[0m10:52:00.438317 [debug] [MainThread]: Wrote artifact WritableManifest to analytics\dbt\target\manifest.json
+[0m10:52:00.465324 [debug] [MainThread]: Wrote artifact SemanticManifest to analytics\dbt\target\semantic_manifest.json
+[0m10:52:00.519336 [debug] [MainThread]: Wrote artifact OsiDocument to analytics\dbt\target\osi_document.json
+[0m10:52:00.611382 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'resource_counts', 'label': '418b1848-6025-47fb-921f-c55a4bcb7bc4', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F6CEA300>]}
+[0m10:52:00.612382 [info ] [MainThread]: Found 1 model, 6 data tests, 500 macros
+[0m10:52:00.616383 [info ] [MainThread]: 
+[0m10:52:00.617384 [info ] [MainThread]: Concurrency: 4 threads (target='dev')
+[0m10:52:00.618384 [info ] [MainThread]: 
+[0m10:52:00.619385 [debug] [MainThread]: Acquiring new duckdb connection 'master'
+[0m10:52:00.621384 [debug] [ThreadPool]: Acquiring new duckdb connection 'list_analytics'
+[0m10:52:06.446883 [debug] [ThreadPool]: Using duckdb connection "list_analytics"
+[0m10:52:06.448884 [debug] [ThreadPool]: On list_analytics: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "connection_name": "list_analytics"} */
+
+    
+    select schema_name
+    from system.information_schema.schemata
+    
+    where lower(catalog_name) = '"analytics"'
+    
+  
+  
+[0m10:52:06.449883 [debug] [ThreadPool]: Opening a new connection, currently in state init
+[0m10:52:06.475889 [debug] [ThreadPool]: SQL status: OK in 0.026 seconds
+[0m10:52:06.478891 [debug] [ThreadPool]: On list_analytics: Close
+[0m10:52:06.481892 [debug] [ThreadPool]: Re-using an available connection from the pool (formerly list_analytics, now create_analytics_main)
+[0m10:52:06.482892 [debug] [ThreadPool]: Creating schema "database: "analytics"
+schema: "main"
+"
+[0m10:52:06.501895 [debug] [ThreadPool]: Using duckdb connection "create_analytics_main"
+[0m10:52:06.502895 [debug] [ThreadPool]: On create_analytics_main: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "connection_name": "create_analytics_main"} */
+
+    
+        select type from duckdb_databases()
+        where lower(database_name)='analytics'
+        and type != 'duckdb'
+    
+  
+[0m10:52:06.502895 [debug] [ThreadPool]: Opening a new connection, currently in state closed
+[0m10:52:06.506896 [debug] [ThreadPool]: SQL status: OK in 0.004 seconds
+[0m10:52:06.511898 [debug] [ThreadPool]: Using duckdb connection "create_analytics_main"
+[0m10:52:06.512898 [debug] [ThreadPool]: On create_analytics_main: BEGIN
+[0m10:52:06.513899 [debug] [ThreadPool]: SQL status: OK in 0.000 seconds
+[0m10:52:06.514898 [debug] [ThreadPool]: Using duckdb connection "create_analytics_main"
+[0m10:52:06.514898 [debug] [ThreadPool]: On create_analytics_main: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "connection_name": "create_analytics_main"} */
+
+    
+    
+        create schema if not exists "analytics"."main"
+    
+[0m10:52:06.516899 [debug] [ThreadPool]: SQL status: OK in 0.001 seconds
+[0m10:52:06.518900 [debug] [ThreadPool]: On create_analytics_main: COMMIT
+[0m10:52:06.520900 [debug] [ThreadPool]: Using duckdb connection "create_analytics_main"
+[0m10:52:06.521900 [debug] [ThreadPool]: On create_analytics_main: COMMIT
+[0m10:52:06.522900 [debug] [ThreadPool]: SQL status: OK in 0.000 seconds
+[0m10:52:06.525901 [debug] [ThreadPool]: On create_analytics_main: Close
+[0m10:52:06.532902 [debug] [ThreadPool]: Acquiring new duckdb connection 'list_analytics_main'
+[0m10:52:06.547906 [debug] [ThreadPool]: Using duckdb connection "list_analytics_main"
+[0m10:52:06.548906 [debug] [ThreadPool]: On list_analytics_main: BEGIN
+[0m10:52:06.550906 [debug] [ThreadPool]: Opening a new connection, currently in state init
+[0m10:52:06.553908 [debug] [ThreadPool]: SQL status: OK in 0.004 seconds
+[0m10:52:06.557908 [debug] [ThreadPool]: Using duckdb connection "list_analytics_main"
+[0m10:52:06.558909 [debug] [ThreadPool]: On list_analytics_main: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "connection_name": "list_analytics_main"} */
+select
+      'analytics' as database,
+      table_name as name,
+      table_schema as schema,
+      CASE table_type
+        WHEN 'BASE TABLE' THEN 'table'
+        WHEN 'VIEW' THEN 'view'
+        WHEN 'LOCAL TEMPORARY' THEN 'table'
+        END as type
+    from system.information_schema.tables
+    where lower(table_schema) = 'main'
+    and lower(table_catalog) = 'analytics'
+  
+[0m10:52:06.572913 [debug] [ThreadPool]: SQL status: OK in 0.013 seconds
+[0m10:52:06.577913 [debug] [ThreadPool]: On list_analytics_main: ROLLBACK
+[0m10:52:06.580914 [debug] [ThreadPool]: On list_analytics_main: Close
+[0m10:52:06.582914 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'runnable_timing', 'label': '418b1848-6025-47fb-921f-c55a4bcb7bc4', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F80F0E00>]}
+[0m10:52:06.584914 [debug] [MainThread]: Using duckdb connection "master"
+[0m10:52:06.585915 [debug] [MainThread]: On master: BEGIN
+[0m10:52:06.586916 [debug] [MainThread]: Opening a new connection, currently in state init
+[0m10:52:06.588915 [debug] [MainThread]: SQL status: OK in 0.002 seconds
+[0m10:52:06.589916 [debug] [MainThread]: On master: COMMIT
+[0m10:52:06.589916 [debug] [MainThread]: Using duckdb connection "master"
+[0m10:52:06.590916 [debug] [MainThread]: On master: COMMIT
+[0m10:52:06.591916 [debug] [MainThread]: SQL status: OK in 0.000 seconds
+[0m10:52:06.592916 [debug] [MainThread]: On master: Close
+[0m10:52:06.662932 [debug] [Thread-1 (]: Began running node model.atlasgr_commercial.commercial_monthly
+[0m10:52:06.663932 [info ] [Thread-1 (]: 1 of 7 START sql table model main.commercial_monthly ........................... [RUN]
+[0m10:52:06.665933 [debug] [Thread-1 (]: Acquiring new duckdb connection 'model.atlasgr_commercial.commercial_monthly'
+[0m10:52:06.666933 [debug] [Thread-1 (]: Began compiling node model.atlasgr_commercial.commercial_monthly
+[0m10:52:06.678935 [debug] [Thread-1 (]: Writing injected SQL for node "model.atlasgr_commercial.commercial_monthly"
+[0m10:52:06.681936 [debug] [Thread-1 (]: Began executing node model.atlasgr_commercial.commercial_monthly
+[0m10:52:06.842972 [debug] [Thread-1 (]: Writing runtime sql for node "model.atlasgr_commercial.commercial_monthly"
+[0m10:52:06.846972 [debug] [Thread-1 (]: Using duckdb connection "model.atlasgr_commercial.commercial_monthly"
+[0m10:52:06.847973 [debug] [Thread-1 (]: On model.atlasgr_commercial.commercial_monthly: BEGIN
+[0m10:52:06.848973 [debug] [Thread-1 (]: Opening a new connection, currently in state init
+[0m10:52:06.850974 [debug] [Thread-1 (]: SQL status: OK in 0.002 seconds
+[0m10:52:06.850974 [debug] [Thread-1 (]: Using duckdb connection "model.atlasgr_commercial.commercial_monthly"
+[0m10:52:06.851974 [debug] [Thread-1 (]: On model.atlasgr_commercial.commercial_monthly: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "model.atlasgr_commercial.commercial_monthly"} */
+
+    
+
+    create  table
+      "analytics"."main"."commercial_monthly__dbt_tmp"
+  
+    
+    as (
+      with source as (
+    select unnest(monthlyMetrics) as metric
+    from read_json_auto('app/data/commercial-data.json')
+)
+
+select
+    metric.month::varchar as month,
+    metric.monthNumber::integer as month_number,
+    metric.target::decimal(18, 2) as target,
+    metric.sold::decimal(18, 2) as sold,
+    metric.adjusted::decimal(18, 2) as adjusted,
+    metric.gap::decimal(18, 2) as gap,
+    metric.attainment::decimal(9, 4) as attainment,
+    metric.health::varchar as health
+from source
+    );
+    
+  
+[0m10:52:06.919989 [debug] [Thread-1 (]: SQL status: OK in 0.067 seconds
+[0m10:52:06.936993 [debug] [Thread-1 (]: Using duckdb connection "model.atlasgr_commercial.commercial_monthly"
+[0m10:52:06.937993 [debug] [Thread-1 (]: On model.atlasgr_commercial.commercial_monthly: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "model.atlasgr_commercial.commercial_monthly"} */
+alter table "analytics"."main"."commercial_monthly__dbt_tmp" rename to "commercial_monthly"
+[0m10:52:06.938993 [debug] [Thread-1 (]: SQL status: OK in 0.001 seconds
+[0m10:52:07.010184 [debug] [Thread-1 (]: On model.atlasgr_commercial.commercial_monthly: COMMIT
+[0m10:52:07.011184 [debug] [Thread-1 (]: Using duckdb connection "model.atlasgr_commercial.commercial_monthly"
+[0m10:52:07.012184 [debug] [Thread-1 (]: On model.atlasgr_commercial.commercial_monthly: COMMIT
+[0m10:52:07.017397 [debug] [Thread-1 (]: SQL status: OK in 0.004 seconds
+[0m10:52:07.028223 [debug] [Thread-1 (]: Using duckdb connection "model.atlasgr_commercial.commercial_monthly"
+[0m10:52:07.029227 [debug] [Thread-1 (]: On model.atlasgr_commercial.commercial_monthly: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "model.atlasgr_commercial.commercial_monthly"} */
+
+      drop table if exists "analytics"."main"."commercial_monthly__dbt_backup" cascade
+    
+[0m10:52:07.030227 [debug] [Thread-1 (]: SQL status: OK in 0.000 seconds
+[0m10:52:07.035228 [debug] [Thread-1 (]: On model.atlasgr_commercial.commercial_monthly: Close
+[0m10:52:07.040229 [debug] [Thread-1 (]: Sending event: {'category': 'dbt', 'action': 'run_model', 'label': '418b1848-6025-47fb-921f-c55a4bcb7bc4', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F6D3C500>]}
+[0m10:52:07.041229 [info ] [Thread-1 (]: 1 of 7 OK created sql table model main.commercial_monthly ...................... [[32mOK[0m in 0.37s]
+[0m10:52:07.042229 [debug] [Thread-1 (]: Finished running node model.atlasgr_commercial.commercial_monthly
+[0m10:52:07.044230 [debug] [Thread-3 (]: Began running node test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1
+[0m10:52:07.045230 [debug] [Thread-4 (]: Began running node test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c
+[0m10:52:07.045230 [debug] [Thread-2 (]: Began running node test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458
+[0m10:52:07.047231 [debug] [Thread-1 (]: Began running node test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb
+[0m10:52:07.046229 [info ] [Thread-3 (]: 2 of 7 START test not_null_commercial_monthly_adjusted ......................... [RUN]
+[0m10:52:07.048231 [info ] [Thread-4 (]: 3 of 7 START test not_null_commercial_monthly_month ............................ [RUN]
+[0m10:52:07.049230 [info ] [Thread-2 (]: 4 of 7 START test not_null_commercial_monthly_month_number ..................... [RUN]
+[0m10:52:07.050231 [info ] [Thread-1 (]: 5 of 7 START test not_null_commercial_monthly_sold ............................. [RUN]
+[0m10:52:07.052232 [debug] [Thread-3 (]: Acquiring new duckdb connection 'test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1'
+[0m10:52:07.053232 [debug] [Thread-4 (]: Acquiring new duckdb connection 'test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c'
+[0m10:52:07.055233 [debug] [Thread-2 (]: Acquiring new duckdb connection 'test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458'
+[0m10:52:07.059234 [debug] [Thread-2 (]: Began compiling node test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458
+[0m10:52:07.057234 [debug] [Thread-3 (]: Began compiling node test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1
+[0m10:52:07.058233 [debug] [Thread-4 (]: Began compiling node test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c
+[0m10:52:07.150253 [debug] [Thread-4 (]: Writing injected SQL for node "test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c"
+[0m10:52:07.134250 [debug] [Thread-3 (]: Writing injected SQL for node "test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1"
+[0m10:52:07.154254 [debug] [Thread-2 (]: Writing injected SQL for node "test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458"
+[0m10:52:07.158255 [debug] [Thread-2 (]: Began executing node test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458
+[0m10:52:07.159256 [debug] [Thread-3 (]: Began executing node test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1
+[0m10:52:07.056232 [debug] [Thread-1 (]: Re-using an available connection from the pool (formerly model.atlasgr_commercial.commercial_monthly, now test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb)
+[0m10:52:07.208266 [debug] [Thread-3 (]: Writing runtime sql for node "test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1"
+[0m10:52:07.213267 [debug] [Thread-2 (]: Writing runtime sql for node "test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458"
+[0m10:52:07.217268 [debug] [Thread-4 (]: Began executing node test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c
+[0m10:52:07.220270 [debug] [Thread-1 (]: Began compiling node test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb
+[0m10:52:07.226271 [debug] [Thread-4 (]: Writing runtime sql for node "test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c"
+[0m10:52:07.244274 [debug] [Thread-1 (]: Writing injected SQL for node "test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb"
+[0m10:52:07.245275 [debug] [Thread-3 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1"
+[0m10:52:07.246276 [debug] [Thread-2 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458"
+[0m10:52:07.248276 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1: BEGIN
+[0m10:52:07.251736 [debug] [Thread-2 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458: BEGIN
+[0m10:52:07.253233 [debug] [Thread-3 (]: Opening a new connection, currently in state init
+[0m10:52:07.254105 [debug] [Thread-2 (]: Opening a new connection, currently in state init
+[0m10:52:07.257074 [debug] [Thread-3 (]: SQL status: OK in 0.004 seconds
+[0m10:52:07.255564 [debug] [Thread-4 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c"
+[0m10:52:07.262985 [debug] [Thread-4 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c: BEGIN
+[0m10:52:07.263985 [debug] [Thread-4 (]: Opening a new connection, currently in state init
+[0m10:52:07.258075 [debug] [Thread-3 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1"
+[0m10:52:07.265536 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1"} */
+
+    
+    select
+      count(*) as failures,
+      count(*) != 0 as should_warn,
+      count(*) != 0 as should_error
+    from (
+      
+    
+  
+    
+    
+
+
+
+select adjusted
+from "analytics"."main"."commercial_monthly"
+where adjusted is null
+
+
+
+  
+  
+      
+    ) dbt_internal_test
+[0m10:52:07.266782 [debug] [Thread-4 (]: SQL status: OK in 0.003 seconds
+[0m10:52:07.258936 [debug] [Thread-2 (]: SQL status: OK in 0.005 seconds
+[0m10:52:07.267288 [debug] [Thread-4 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c"
+[0m10:52:07.269292 [debug] [Thread-3 (]: SQL status: OK in 0.003 seconds
+[0m10:52:07.270292 [debug] [Thread-2 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458"
+[0m10:52:07.271293 [debug] [Thread-4 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c"} */
+
+    
+    select
+      count(*) as failures,
+      count(*) != 0 as should_warn,
+      count(*) != 0 as should_error
+    from (
+      
+    
+  
+    
+    
+
+
+
+select month
+from "analytics"."main"."commercial_monthly"
+where month is null
+
+
+
+  
+  
+      
+    ) dbt_internal_test
+[0m10:52:07.272862 [debug] [Thread-1 (]: Began executing node test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb
+[0m10:52:07.274371 [debug] [Thread-2 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458"} */
+
+    
+    select
+      count(*) as failures,
+      count(*) != 0 as should_warn,
+      count(*) != 0 as should_error
+    from (
+      
+    
+  
+    
+    
+
+
+
+select month_number
+from "analytics"."main"."commercial_monthly"
+where month_number is null
+
+
+
+  
+  
+      
+    ) dbt_internal_test
+[0m10:52:07.282088 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1: ROLLBACK
+[0m10:52:07.287090 [debug] [Thread-1 (]: Writing runtime sql for node "test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb"
+[0m10:52:07.289090 [debug] [Thread-4 (]: SQL status: OK in 0.005 seconds
+[0m10:52:07.290090 [debug] [Thread-2 (]: SQL status: OK in 0.002 seconds
+[0m10:52:07.292091 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1: Close
+[0m10:52:07.310095 [debug] [Thread-1 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb"
+[0m10:52:07.295092 [debug] [Thread-4 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c: ROLLBACK
+[0m10:52:07.311095 [debug] [Thread-1 (]: On test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb: BEGIN
+[0m10:52:07.312095 [debug] [Thread-1 (]: Opening a new connection, currently in state closed
+[0m10:52:07.313096 [debug] [Thread-4 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c: Close
+[0m10:52:07.314096 [debug] [Thread-1 (]: SQL status: OK in 0.002 seconds
+[0m10:52:07.308094 [debug] [Thread-2 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458: ROLLBACK
+[0m10:52:07.316096 [debug] [Thread-1 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb"
+[0m10:52:07.310095 [info ] [Thread-3 (]: 2 of 7 PASS not_null_commercial_monthly_adjusted ............................... [[32mPASS[0m in 0.26s]
+[0m10:52:07.315096 [info ] [Thread-4 (]: 3 of 7 PASS not_null_commercial_monthly_month .................................. [[32mPASS[0m in 0.26s]
+[0m10:52:07.318098 [debug] [Thread-1 (]: On test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb"} */
+
+    
+    select
+      count(*) as failures,
+      count(*) != 0 as should_warn,
+      count(*) != 0 as should_error
+    from (
+      
+    
+  
+    
+    
+
+
+
+select sold
+from "analytics"."main"."commercial_monthly"
+where sold is null
+
+
+
+  
+  
+      
+    ) dbt_internal_test
+[0m10:52:07.320097 [debug] [Thread-2 (]: On test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458: Close
+[0m10:52:07.321098 [debug] [Thread-3 (]: Finished running node test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1
+[0m10:52:07.322097 [debug] [Thread-4 (]: Finished running node test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c
+[0m10:52:07.325099 [debug] [Thread-3 (]: Began running node test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6
+[0m10:52:07.324100 [info ] [Thread-2 (]: 4 of 7 PASS not_null_commercial_monthly_month_number ........................... [[32mPASS[0m in 0.27s]
+[0m10:52:07.327099 [debug] [Thread-1 (]: SQL status: OK in 0.003 seconds
+[0m10:52:07.329099 [debug] [Thread-4 (]: Began running node test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070
+[0m10:52:07.330101 [info ] [Thread-3 (]: 6 of 7 START test not_null_commercial_monthly_target ........................... [RUN]
+[0m10:52:07.333100 [debug] [Thread-2 (]: Finished running node test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458
+[0m10:52:07.338103 [info ] [Thread-4 (]: 7 of 7 START test unique_commercial_monthly_month_number ....................... [RUN]
+[0m10:52:07.340102 [debug] [Thread-3 (]: Re-using an available connection from the pool (formerly test.atlasgr_commercial.not_null_commercial_monthly_adjusted.ff5dc9a7a1, now test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6)
+[0m10:52:07.345228 [debug] [Thread-1 (]: On test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb: ROLLBACK
+[0m10:52:07.346228 [debug] [Thread-4 (]: Re-using an available connection from the pool (formerly test.atlasgr_commercial.not_null_commercial_monthly_month.2e10dd420c, now test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070)
+[0m10:52:07.348229 [debug] [Thread-3 (]: Began compiling node test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6
+[0m10:52:07.349229 [debug] [Thread-4 (]: Began compiling node test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070
+[0m10:52:07.367233 [debug] [Thread-3 (]: Writing injected SQL for node "test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6"
+[0m10:52:07.373234 [debug] [Thread-1 (]: On test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb: Close
+[0m10:52:07.387238 [debug] [Thread-4 (]: Writing injected SQL for node "test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070"
+[0m10:52:07.389238 [info ] [Thread-1 (]: 5 of 7 PASS not_null_commercial_monthly_sold ................................... [[32mPASS[0m in 0.33s]
+[0m10:52:07.390238 [debug] [Thread-1 (]: Finished running node test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb
+[0m10:52:07.391238 [debug] [Thread-4 (]: Began executing node test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070
+[0m10:52:07.392239 [debug] [Thread-3 (]: Began executing node test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6
+[0m10:52:07.395238 [debug] [Thread-4 (]: Writing runtime sql for node "test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070"
+[0m10:52:07.397239 [debug] [Thread-3 (]: Writing runtime sql for node "test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6"
+[0m10:52:07.399239 [debug] [Thread-4 (]: Using duckdb connection "test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070"
+[0m10:52:07.400241 [debug] [Thread-4 (]: On test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070: BEGIN
+[0m10:52:07.401241 [debug] [Thread-3 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6"
+[0m10:52:07.402240 [debug] [Thread-4 (]: Opening a new connection, currently in state closed
+[0m10:52:07.402240 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6: BEGIN
+[0m10:52:07.403240 [debug] [Thread-3 (]: Opening a new connection, currently in state closed
+[0m10:52:07.404242 [debug] [Thread-4 (]: SQL status: OK in 0.002 seconds
+[0m10:52:07.405241 [debug] [Thread-4 (]: Using duckdb connection "test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070"
+[0m10:52:07.405241 [debug] [Thread-3 (]: SQL status: OK in 0.002 seconds
+[0m10:52:07.406242 [debug] [Thread-4 (]: On test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070"} */
+
+    
+    select
+      count(*) as failures,
+      count(*) != 0 as should_warn,
+      count(*) != 0 as should_error
+    from (
+      
+    
+  
+    
+    
+
+select
+    month_number as unique_field,
+    count(*) as n_records
+
+from "analytics"."main"."commercial_monthly"
+where month_number is not null
+group by month_number
+having count(*) > 1
+
+
+
+  
+  
+      
+    ) dbt_internal_test
+[0m10:52:07.406242 [debug] [Thread-3 (]: Using duckdb connection "test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6"
+[0m10:52:07.407242 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6: /* {"app": "dbt", "dbt_version": "1.12.0", "profile_name": "atlasgr_commercial", "target_name": "dev", "node_id": "test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6"} */
+
+    
+    select
+      count(*) as failures,
+      count(*) != 0 as should_warn,
+      count(*) != 0 as should_error
+    from (
+      
+    
+  
+    
+    
+
+
+
+select target
+from "analytics"."main"."commercial_monthly"
+where target is null
+
+
+
+  
+  
+      
+    ) dbt_internal_test
+[0m10:52:07.408242 [debug] [Thread-4 (]: SQL status: OK in 0.002 seconds
+[0m10:52:07.409242 [debug] [Thread-3 (]: SQL status: OK in 0.001 seconds
+[0m10:52:07.411242 [debug] [Thread-4 (]: On test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070: ROLLBACK
+[0m10:52:07.412242 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6: ROLLBACK
+[0m10:52:07.413243 [debug] [Thread-4 (]: On test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070: Close
+[0m10:52:07.413243 [debug] [Thread-3 (]: On test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6: Close
+[0m10:52:07.414244 [info ] [Thread-4 (]: 7 of 7 PASS unique_commercial_monthly_month_number ............................. [[32mPASS[0m in 0.07s]
+[0m10:52:07.417245 [debug] [Thread-4 (]: Finished running node test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070
+[0m10:52:07.416243 [info ] [Thread-3 (]: 6 of 7 PASS not_null_commercial_monthly_target ................................. [[32mPASS[0m in 0.08s]
+[0m10:52:07.418244 [debug] [Thread-3 (]: Finished running node test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6
+[0m10:52:07.421245 [debug] [MainThread]: Using duckdb connection "master"
+[0m10:52:07.422245 [debug] [MainThread]: On master: BEGIN
+[0m10:52:07.422245 [debug] [MainThread]: Opening a new connection, currently in state closed
+[0m10:52:07.423245 [debug] [MainThread]: SQL status: OK in 0.001 seconds
+[0m10:52:07.424245 [debug] [MainThread]: On master: COMMIT
+[0m10:52:07.424245 [debug] [MainThread]: Using duckdb connection "master"
+[0m10:52:07.424245 [debug] [MainThread]: On master: COMMIT
+[0m10:52:07.425245 [debug] [MainThread]: SQL status: OK in 0.000 seconds
+[0m10:52:07.426246 [debug] [MainThread]: On master: Close
+[0m10:52:07.426246 [debug] [MainThread]: Connection 'master' was properly closed.
+[0m10:52:07.427246 [debug] [MainThread]: Connection 'create_analytics_main' was properly closed.
+[0m10:52:07.427246 [debug] [MainThread]: Connection 'list_analytics_main' was properly closed.
+[0m10:52:07.427246 [debug] [MainThread]: Connection 'test.atlasgr_commercial.not_null_commercial_monthly_sold.e2597c1bfb' was properly closed.
+[0m10:52:07.428247 [debug] [MainThread]: Connection 'test.atlasgr_commercial.not_null_commercial_monthly_target.3058aae6f6' was properly closed.
+[0m10:52:07.428247 [debug] [MainThread]: Connection 'test.atlasgr_commercial.unique_commercial_monthly_month_number.2ec979f070' was properly closed.
+[0m10:52:07.429246 [debug] [MainThread]: Connection 'test.atlasgr_commercial.not_null_commercial_monthly_month_number.c7d92da458' was properly closed.
+[0m10:52:07.430247 [info ] [MainThread]: 
+[0m10:52:07.431246 [info ] [MainThread]: Finished running 1 table model, 6 data tests in 0 hours 0 minutes and 6.81 seconds (6.81s).
+[0m10:52:07.433247 [debug] [MainThread]: Command end result
+[0m10:52:07.503800 [debug] [MainThread]: Wrote artifact WritableManifest to analytics\dbt\target\manifest.json
+[0m10:52:07.508801 [debug] [MainThread]: Wrote artifact SemanticManifest to analytics\dbt\target\semantic_manifest.json
+[0m10:52:07.513802 [debug] [MainThread]: Wrote artifact OsiDocument to analytics\dbt\target\osi_document.json
+[0m10:52:07.526805 [debug] [MainThread]: Wrote artifact RunExecutionResult to analytics\dbt\target\run_results.json
+[0m10:52:07.527805 [info ] [MainThread]: 
+[0m10:52:07.527805 [info ] [MainThread]: [32mCompleted successfully[0m
+[0m10:52:07.528805 [info ] [MainThread]: 
+[0m10:52:07.529805 [info ] [MainThread]: Done. PASS=7 WARN=0 ERROR=0 SKIP=0 NO-OP=0 REUSED=0 TOTAL=7
+[0m10:52:07.531807 [debug] [MainThread]: Command `cli build` succeeded at 10:52:07.531807 after 13.07 seconds
+[0m10:52:07.532808 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F3E0F3E0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F3E0D010>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x00000214F3E0CAD0>]}
+[0m10:52:07.534808 [debug] [MainThread]: Flushing usage events
+[0m10:52:07.705816 [debug] [MainThread]: An error was encountered while trying to flush usage events

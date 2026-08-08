@@ -1,0 +1,7 @@
+atlasgr_commercial:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: db/analytics.duckdb
+      threads: 4

@@ -40,3 +40,10 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+/.venv-opensource/
+/db/*.duckdb
+/playwright-report/
+/test-results/
+/analytics/dbt/.user.yml
+/analytics/dbt/logs/
+/analytics/dbt/target/
